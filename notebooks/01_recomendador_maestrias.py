@@ -1,6 +1,7 @@
 # %%
 import sys
 from pathlib import Path
+from IPython.display import display
 
 import pandas as pd
 import numpy as np

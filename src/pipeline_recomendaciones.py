@@ -85,7 +85,7 @@ def obtener_laboral_sql(conn, identificadores):
 
     conn.commit()
 
-    query = """
+   query = """
 SELECT 
     s.NUMAFI,
     s.APENOMAFI,

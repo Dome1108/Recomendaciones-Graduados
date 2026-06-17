@@ -1,10 +1,10 @@
 # %%
 import sys
 from pathlib import Path
-from IPython.display import display
 
 import pandas as pd
 import numpy as np
+from IPython.display import display
 
 # Agregar carpeta src al path
 BASE_DIR = Path.cwd().parent if Path.cwd().name == "notebooks" else Path.cwd()

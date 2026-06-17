@@ -1,1 +1,25 @@
+# Datos sensibles
+data/*
+outputs/*
 
+# Mantener carpetas visibles
+!data/.gitkeep
+!outputs/.gitkeep
+
+# Credenciales
+.env
+
+# Python
+__pycache__/
+*.pyc
+
+# Jupyter
+.ipynb_checkpoints/
+
+# Entornos virtuales
+.venv/
+venv/
+
+# Temporales
+~$*.xlsx
+*.tmp

@@ -86,21 +86,20 @@ def obtener_laboral_sql(conn, identificadores):
     conn.commit()
 
     query = """
-
 SELECT 
     s.NUMAFI,
     s.APENOMAFI,
     s.TIPOEMPRES,
     s.NOMEMP,
-    s.OCUPAFI,
+    s.OCUAFI AS OCUPAFI,
     s.SALARIO,
     s.FECINGAFI,
-    s.FECESALAFI,
     s.ANIO,
     s.MES
 FROM [Reportes].[dbo].[SIM_Y_ENE_26] s
 INNER JOIN #ids_graduados i
-    ON CAST(s.NUMAFI AS VARCHAR(30)) = i.NUMAFI;
+    ON CAST(s.NUMAFI AS VARCHAR(30)) COLLATE SQL_Latin1_General_CP1_CI_AI
+     = i.NUMAFI COLLATE SQL_Latin1_General_CP1_CI_AI;
 """
 
     laboral = pd.read_sql(query, conn)

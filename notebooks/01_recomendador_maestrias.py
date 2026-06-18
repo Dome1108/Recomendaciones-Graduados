@@ -1,6 +1,7 @@
 # %%
 import sys
 from pathlib import Path
+import re
 
 import pandas as pd
 import numpy as np
@@ -41,6 +42,42 @@ print("Ruta salida:", RUTA_SALIDA)
 print("Tabla destino:", TABLA_RESULTADO_BDD)
 
 # %%
+def limpiar_caracteres_excel(valor):
+    """
+    Elimina caracteres ilegales para archivos Excel/openpyxl.
+    No altera números ni fechas.
+    """
+
+    if isinstance(valor, str):
+        return re.sub(r"[\x00-\x08\x0B-\x0C\x0E-\x1F]", "", valor)
+
+    return valor
+
+
+def limpiar_dataframe_excel(df):
+    """
+    Limpia columnas tipo texto para poder exportar a Excel sin errores.
+    """
+
+    df_limpio = df.copy()
+
+    for col in df_limpio.columns:
+        if df_limpio[col].dtype == "object":
+            df_limpio[col] = df_limpio[col].apply(limpiar_caracteres_excel)
+
+    return df_limpio
+
+
+def exportar_hoja_segura(writer, df, sheet_name):
+    """
+    Exporta una hoja limpiando caracteres ilegales para Excel.
+    """
+
+    df_limpio = limpiar_dataframe_excel(df)
+    df_limpio.to_excel(writer, sheet_name=sheet_name, index=False)
+
+
+# %%
 conn = conectar_sql()
 
 print("Conexión SQL exitosa")
@@ -58,21 +95,27 @@ graduados_pregrado, graduados_posgrado = preparar_graduados_pregrado_y_posgrado(
 
 print("Filas pregrado:", len(graduados_pregrado))
 print("Filas posgrado:", len(graduados_posgrado))
-print("Personas con posgrado UDLA previo:", (graduados_pregrado["YaEstudioPosgradoUDLA"] == "Sí").sum())
-
-display(
-    graduados_pregrado[
-        [
-            "Identificador",
-            "Estudiante",
-            "CarreraHom",
-            "Titulo",
-            "FechaGraduacion",
-            "YaEstudioPosgradoUDLA",
-            "PosgradosUDLAPrevios"
-        ]
-    ].head(20)
+print(
+    "Personas con posgrado UDLA previo:",
+    (graduados_pregrado["YaEstudioPosgradoUDLA"] == "Sí").sum()
 )
+
+columnas_preview_graduados = [
+    "Identificador",
+    "Estudiante",
+    "CarreraHom",
+    "Titulo",
+    "FechaGraduacion",
+    "YaEstudioPosgradoUDLA",
+    "PosgradosUDLAPrevios"
+]
+
+columnas_preview_graduados = [
+    c for c in columnas_preview_graduados
+    if c in graduados_pregrado.columns
+]
+
+display(graduados_pregrado[columnas_preview_graduados].head(20))
 
 # %%
 laboral = obtener_laboral_sql(
@@ -174,22 +217,8 @@ columnas_validacion = [c for c in columnas_validacion if c in top3.columns]
 display(top3[columnas_validacion].head(30))
 
 # %%
-RUTA_SALIDA.parent.mkdir(parents=True, exist_ok=True)
+# 1. Cargar primero a SQL para que la tabla exista aunque falle el Excel
 
-with pd.ExcelWriter(RUTA_SALIDA, engine="openpyxl") as writer:
-    graduados_total.to_excel(writer, sheet_name="Vw_Graduados", index=False)
-    graduados_pregrado.to_excel(writer, sheet_name="Graduados_pregrado", index=False)
-    graduados_posgrado.to_excel(writer, sheet_name="Graduados_posgrado", index=False)
-    base.to_excel(writer, sheet_name="Base_graduados_laboral", index=False)
-    maestrias.to_excel(writer, sheet_name="Catalogo_maestrias", index=False)
-    catalogo_lineas.to_excel(writer, sheet_name="Lineas_catalogo", index=False)
-    recomendaciones_larga.to_excel(writer, sheet_name="Recomendaciones_larga", index=False)
-    top3.to_excel(writer, sheet_name="Top3_por_graduado", index=False)
-
-print("Archivo exportado en:")
-print(RUTA_SALIDA)
-
-# %%
 filas_cargadas = cargar_resultado_bdd_idm(
     conn=conn,
     top3=top3
@@ -197,3 +226,21 @@ filas_cargadas = cargar_resultado_bdd_idm(
 
 print(f"Tabla cargada en {TABLA_RESULTADO_BDD}")
 print(f"Filas cargadas: {filas_cargadas}")
+
+# %%
+# 2. Exportar Excel local limpiando caracteres ilegales
+
+RUTA_SALIDA.parent.mkdir(parents=True, exist_ok=True)
+
+with pd.ExcelWriter(RUTA_SALIDA, engine="openpyxl") as writer:
+    exportar_hoja_segura(writer, graduados_total, "Vw_Graduados")
+    exportar_hoja_segura(writer, graduados_pregrado, "Graduados_pregrado")
+    exportar_hoja_segura(writer, graduados_posgrado, "Graduados_posgrado")
+    exportar_hoja_segura(writer, base, "Base_graduados_laboral")
+    exportar_hoja_segura(writer, maestrias, "Catalogo_maestrias")
+    exportar_hoja_segura(writer, catalogo_lineas, "Lineas_catalogo")
+    exportar_hoja_segura(writer, recomendaciones_larga, "Recomendaciones_larga")
+    exportar_hoja_segura(writer, top3, "Top3_por_graduado")
+
+print("Archivo exportado en:")
+print(RUTA_SALIDA)

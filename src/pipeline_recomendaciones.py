@@ -134,6 +134,7 @@ def obtener_laboral_sql(conn, identificadores):
 def cruzar_graduados_laboral(graduados, laboral):
     """
     Cruza Excel de graduados con información laboral de SQL.
+    Si no existe información laboral, conserva igual al graduado y marca el caso.
     """
 
     base = graduados.merge(
@@ -142,6 +143,20 @@ def cruzar_graduados_laboral(graduados, laboral):
         right_on="NUMAFI",
         how="left"
     )
+
+    base["TieneInformacionLaboral"] = np.where(
+        base["NUMAFI"].notna(),
+        "Con información laboral",
+        "Sin información laboral"
+    )
+
+    campos_laborales = ["TIPOEMPRES", "NOMEMP", "OCUPAFI"]
+
+    for col in campos_laborales:
+        if col not in base.columns:
+            base[col] = "Sin información laboral"
+        else:
+            base[col] = base[col].fillna("Sin información laboral")
 
     hoy = pd.Timestamp.today().normalize()
 
@@ -168,8 +183,10 @@ def cruzar_graduados_laboral(graduados, laboral):
         base["AniosEnCargo"] = (
             (hoy - base["FECINGAFI"]).dt.days / 365.25
         ).round(1)
+
+        base["AniosEnCargo"] = base["AniosEnCargo"].fillna(0)
     else:
-        base["AniosEnCargo"] = np.nan
+        base["AniosEnCargo"] = 0
 
     return base
 
@@ -363,6 +380,7 @@ def obtener_programas_por_linea(catalogo_lineas, linea, n=3):
 def generar_recomendaciones(base, catalogo_lineas):
     """
     Genera recomendaciones Top 3 para cada graduado.
+    Incluye graduados con y sin información laboral.
     """
 
     recomendaciones = []
@@ -371,7 +389,14 @@ def generar_recomendaciones(base, catalogo_lineas):
         ranking = recomendar_lineas(row)
 
         if ranking.empty:
-            continue
+            ranking = pd.DataFrame({
+                "LineaMaestria": [
+                    "MBA_ADMINISTRACION",
+                    "GESTION_PROYECTOS",
+                    "ANALITICA_DATOS"
+                ],
+                "Score": [35, 30, 25]
+            })
 
         ranking = ranking.head(3).copy()
 
@@ -379,10 +404,11 @@ def generar_recomendaciones(base, catalogo_lineas):
         ranking["Estudiante"] = row.get("Estudiante", "")
         ranking["CarreraHom"] = row.get("CarreraHom", "")
         ranking["Titulo"] = row.get("Titulo", "")
-        ranking["NOMEMP"] = row.get("NOMEMP", "")
-        ranking["TIPOEMPRES"] = row.get("TIPOEMPRES", "")
-        ranking["OCUPAFI"] = row.get("OCUPAFI", "")
-        ranking["AniosEnCargo"] = row.get("AniosEnCargo", np.nan)
+        ranking["NOMEMP"] = row.get("NOMEMP", "Sin información laboral")
+        ranking["TIPOEMPRES"] = row.get("TIPOEMPRES", "Sin información laboral")
+        ranking["OCUPAFI"] = row.get("OCUPAFI", "Sin información laboral")
+        ranking["TieneInformacionLaboral"] = row.get("TieneInformacionLaboral", "Sin información laboral")
+        ranking["AniosEnCargo"] = row.get("AniosEnCargo", 0)
         ranking["AniosDesdeGraduacion"] = row.get("AniosDesdeGraduacion", np.nan)
 
         ranking["ProgramasSugeridosUDLA"] = ranking["LineaMaestria"].apply(
@@ -398,18 +424,31 @@ def generar_recomendaciones(base, catalogo_lineas):
 
     recomendaciones_larga = pd.concat(recomendaciones, ignore_index=True)
 
+    campos_index = [
+        "Identificador",
+        "Estudiante",
+        "CarreraHom",
+        "Titulo",
+        "NOMEMP",
+        "TIPOEMPRES",
+        "OCUPAFI",
+        "TieneInformacionLaboral",
+        "AniosEnCargo",
+        "AniosDesdeGraduacion"
+    ]
+
+    for col in campos_index:
+        if col not in recomendaciones_larga.columns:
+            recomendaciones_larga[col] = ""
+
+    recomendaciones_larga["NOMEMP"] = recomendaciones_larga["NOMEMP"].fillna("Sin información laboral")
+    recomendaciones_larga["TIPOEMPRES"] = recomendaciones_larga["TIPOEMPRES"].fillna("Sin información laboral")
+    recomendaciones_larga["OCUPAFI"] = recomendaciones_larga["OCUPAFI"].fillna("Sin información laboral")
+    recomendaciones_larga["TieneInformacionLaboral"] = recomendaciones_larga["TieneInformacionLaboral"].fillna("Sin información laboral")
+    recomendaciones_larga["AniosEnCargo"] = recomendaciones_larga["AniosEnCargo"].fillna(0)
+
     top3 = recomendaciones_larga.pivot_table(
-        index=[
-            "Identificador",
-            "Estudiante",
-            "CarreraHom",
-            "Titulo",
-            "NOMEMP",
-            "TIPOEMPRES",
-            "OCUPAFI",
-            "AniosEnCargo",
-            "AniosDesdeGraduacion"
-        ],
+        index=campos_index,
         columns="OrdenRecomendacion",
         values=["LineaMaestria", "Score", "ProgramasSugeridosUDLA"],
         aggfunc="first"

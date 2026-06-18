@@ -5,12 +5,11 @@ from utils_texto import normalizar_texto
 from recomendador import recomendar_lineas, generar_justificacion
 
 
-def cargar_graduados(ruta_excel):
-    """
-    Carga la base de graduados desde Excel y estandariza nombres de columnas.
-    """
+TABLA_RESULTADO_BDD = "BDD_IDM.dbo.Recomendaciones_Maestrias_Graduados"
 
-    graduados = pd.read_excel(ruta_excel)
+
+def estandarizar_columnas_graduados(graduados):
+    graduados = graduados.copy()
 
     graduados.columns = (
         graduados.columns
@@ -21,8 +20,25 @@ def cargar_graduados(ruta_excel):
 
     mapa_columnas = {
         "IdentificacionBanner": "Identificador",
+        "Identificador": "Identificador",
+        "Cedula": "Identificador",
+        "Cédula": "Identificador",
+        "NUMAFI": "Identificador",
+
         "CarreraHomologada": "CarreraHom",
+        "CarreraHom": "CarreraHom",
+        "DesCarrera": "CarreraHom",
+        "Descarrera": "CarreraHom",
+
         "desfacultad": "desfacultad",
+        "DesFacultad": "desfacultad",
+        "Facultad": "desfacultad",
+
+        "regimen": "regimen",
+        "Regimen": "regimen",
+        "NivelEstudio": "NivelEstudio",
+        "IdNivelEstu": "IdNivelEstu",
+
         "Titulo": "Titulo",
         "FechaGraduacion": "FechaGraduacion",
         "Estudiante": "Estudiante",
@@ -30,17 +46,22 @@ def cargar_graduados(ruta_excel):
         "Genero": "Genero",
         "Modalidad": "Modalidad",
         "Semestre": "Semestre",
-        "regimen": "regimen",
+        "PeriodoTemporal": "PeriodoTemporal",
         "Tipo_Trabajo": "Tipo_Trabajo",
-        "NotaFinalCarrera": "NotaFinalCarrera",
-        "PeriodoTemporal": "PeriodoTemporal"
+        "NotaFinalCarrera": "NotaFinalCarrera"
     }
 
     graduados = graduados.rename(columns=mapa_columnas)
 
     if "Identificador" not in graduados.columns:
         raise ValueError(
-            "No se encontró la columna de identificador. "
+            "No se encontró columna de identificador en Vw_Graduados. "
+            f"Columnas disponibles: {graduados.columns.tolist()}"
+        )
+
+    if "CarreraHom" not in graduados.columns:
+        raise ValueError(
+            "No se encontró columna de carrera en Vw_Graduados. "
             f"Columnas disponibles: {graduados.columns.tolist()}"
         )
 
@@ -51,198 +72,80 @@ def cargar_graduados(ruta_excel):
         .str.strip()
     )
 
+    columnas_minimas = [
+        "Estudiante",
+        "MailUDLA",
+        "Titulo",
+        "desfacultad",
+        "regimen",
+        "FechaGraduacion",
+        "Modalidad",
+        "Genero",
+        "Semestre"
+    ]
+
+    for col in columnas_minimas:
+        if col not in graduados.columns:
+            graduados[col] = ""
+
     return graduados
 
 
-def obtener_laboral_sql(conn, identificadores):
+def cargar_graduados_sql(conn):
     """
-    Consulta información laboral desde SIM_Y_ENE_26 para los identificadores del Excel.
-    """
-
-    ids = (
-        pd.Series(identificadores)
-        .dropna()
-        .astype(str)
-        .str.strip()
-        .unique()
-        .tolist()
-    )
-
-    cursor = conn.cursor()
-
-    cursor.execute("""
-    IF OBJECT_ID('tempdb..#ids_graduados') IS NOT NULL
-        DROP TABLE #ids_graduados;
-
-    CREATE TABLE #ids_graduados (
-        NUMAFI VARCHAR(30)
-    );
-    """)
-
-    cursor.fast_executemany = True
-
-    cursor.executemany(
-        "INSERT INTO #ids_graduados (NUMAFI) VALUES (?)",
-        [(i,) for i in ids]
-    )
-
-    conn.commit()
-
-    query = """
-    SELECT 
-        s.NUMAFI,
-        s.APENOMAFI,
-        s.TIPOEMPRES,
-        s.NOMEMP,
-        s.OCUAFI AS OCUPAFI,
-        s.SALARIO,
-        s.FECINGAFI,
-        s.ANIO,
-        s.MES
-    FROM [Reportes].[dbo].[SIM_Y_ENE_26] s
-    INNER JOIN #ids_graduados i
-        ON CAST(s.NUMAFI AS VARCHAR(30)) COLLATE SQL_Latin1_General_CP1_CI_AI
-         = i.NUMAFI COLLATE SQL_Latin1_General_CP1_CI_AI;
-    """
-
-    laboral = pd.read_sql(query, conn)
-
-    if laboral.empty:
-        return laboral
-
-    laboral["NUMAFI"] = laboral["NUMAFI"].astype(str).str.strip()
-
-    laboral["FECINGAFI"] = pd.to_datetime(
-        laboral["FECINGAFI"],
-        errors="coerce",
-        dayfirst=True
-    )
-
-    laboral = laboral.sort_values(
-        by=["NUMAFI", "ANIO", "MES", "FECINGAFI"],
-        ascending=[True, True, True, True]
-    )
-
-    laboral_unico = laboral.drop_duplicates(
-        subset=["NUMAFI"],
-        keep="last"
-    )
-
-    return laboral_unico
-
-
-def cruzar_graduados_laboral(graduados, laboral):
-    """
-    Cruza Excel de graduados con información laboral de SQL.
-    Si no existe información laboral, conserva igual al graduado y marca el caso.
-    """
-
-    base = graduados.merge(
-        laboral,
-        left_on="Identificador",
-        right_on="NUMAFI",
-        how="left"
-    )
-
-    base["TieneInformacionLaboral"] = np.where(
-        base["NUMAFI"].notna(),
-        "Con información laboral",
-        "Sin información laboral"
-    )
-
-    campos_laborales = ["TIPOEMPRES", "NOMEMP", "OCUPAFI"]
-
-    for col in campos_laborales:
-        if col not in base.columns:
-            base[col] = "Sin información laboral"
-        else:
-            base[col] = base[col].fillna("Sin información laboral")
-
-    hoy = pd.Timestamp.today().normalize()
-
-    if "FechaGraduacion" in base.columns:
-        base["FechaGraduacion"] = pd.to_datetime(
-            base["FechaGraduacion"],
-            errors="coerce",
-            dayfirst=True
-        )
-
-        base["AniosDesdeGraduacion"] = (
-            (hoy - base["FechaGraduacion"]).dt.days / 365.25
-        ).round(1)
-    else:
-        base["AniosDesdeGraduacion"] = np.nan
-
-    if "FECINGAFI" in base.columns:
-        base["FECINGAFI"] = pd.to_datetime(
-            base["FECINGAFI"],
-            errors="coerce",
-            dayfirst=True
-        )
-
-        base["AniosEnCargo"] = (
-            (hoy - base["FECINGAFI"]).dt.days / 365.25
-        ).round(1)
-
-        base["AniosEnCargo"] = base["AniosEnCargo"].fillna(0)
-    else:
-        base["AniosEnCargo"] = 0
-
-    return base
-
-
-def obtener_catalogo_udla(conn):
-    """
-    Consulta catálogo completo de carreras UDLA.
+    Carga toda la base de graduados desde DwhOperacional.dbo.Vw_Graduados.
     """
 
     query = """
     SELECT *
-    FROM DwhOperacional..Vw_CarreraFacultadArea_new;
+    FROM DwhOperacional.dbo.Vw_Graduados;
     """
 
-    catalogo = pd.read_sql(query, conn)
+    graduados = pd.read_sql(query, conn)
+    graduados = estandarizar_columnas_graduados(graduados)
 
-    return catalogo
+    return graduados
 
 
-def detectar_columna_programa(catalogo):
+def cargar_graduados_excel(ruta_excel):
     """
-    Detecta la columna donde está el nombre del programa/carrera.
+    Solo para pruebas locales si se quisiera volver a usar Excel.
     """
 
-    posibles_columnas = [
-        "CarreraHomologada",
-        "DesCarrera",
-        "Descarrera",
-        "DesCarreraUnificado",
-        "CarreraHom",
-        "CARRERAHOM",
-        "Carrera",
-        "CARRERA",
-        "NombreCarrera",
-        "NOMBRECARRERA",
-        "Programa",
-        "PROGRAMA",
-        "Descripcion",
-        "DESCRIPCION"
+    graduados = pd.read_excel(ruta_excel)
+    graduados = estandarizar_columnas_graduados(graduados)
+
+    return graduados
+
+
+def detectar_tipo_nivel(row):
+    texto = " ".join([
+        normalizar_texto(row.get("regimen", "")),
+        normalizar_texto(row.get("NivelEstudio", "")),
+        normalizar_texto(row.get("CarreraHom", "")),
+        normalizar_texto(row.get("Titulo", ""))
+    ])
+
+    palabras_posgrado = [
+        "POSGRADO",
+        "POSTGRADO",
+        "MAESTR",
+        "MAGISTER",
+        "ESPECIALIZ",
+        "DOCTORADO",
+        "PHD"
     ]
 
-    for col in posibles_columnas:
-        if col in catalogo.columns:
-            return col
+    if any(p in texto for p in palabras_posgrado):
+        return "POSGRADO"
 
-    raise ValueError(
-        "No se pudo detectar la columna del programa. "
-        f"Columnas disponibles: {catalogo.columns.tolist()}"
-    )
+    if "PREGRADO" in texto:
+        return "PREGRADO"
+
+    return "PREGRADO"
 
 
 def asignar_linea_programa(nombre_programa):
-    """
-    Clasifica cada maestría en una línea de recomendación.
-    """
-
     txt = normalizar_texto(nombre_programa)
 
     if any(p in txt for p in [
@@ -308,11 +211,245 @@ def asignar_linea_programa(nombre_programa):
     return "OTRAS"
 
 
-def preparar_catalogo_maestrias(catalogo, col_programa=None):
+def preparar_graduados_pregrado_y_posgrado(graduados):
     """
-    Filtra programas de maestría y asigna línea de recomendación.
+    Separa registros de pregrado y detecta si la persona ya cursó posgrado UDLA.
     """
 
+    graduados = graduados.copy()
+
+    graduados["TipoNivelAcademico"] = graduados.apply(detectar_tipo_nivel, axis=1)
+
+    graduados["FechaGraduacion"] = pd.to_datetime(
+        graduados["FechaGraduacion"],
+        errors="coerce",
+        dayfirst=True
+    )
+
+    pregrado = graduados[graduados["TipoNivelAcademico"] == "PREGRADO"].copy()
+    posgrado = graduados[graduados["TipoNivelAcademico"] == "POSGRADO"].copy()
+
+    pregrado["LlavePregrado"] = (
+        pregrado["Identificador"].astype(str)
+        + "|"
+        + pregrado["CarreraHom"].astype(str)
+        + "|"
+        + pregrado["Titulo"].astype(str)
+    )
+
+    pregrado = pregrado.sort_values(
+        by=["Identificador", "CarreraHom", "FechaGraduacion"],
+        ascending=[True, True, False]
+    )
+
+    pregrado = pregrado.drop_duplicates(
+        subset=["LlavePregrado"],
+        keep="first"
+    )
+
+    if posgrado.empty:
+        pregrado["YaEstudioPosgradoUDLA"] = "No"
+        pregrado["PosgradosUDLAPrevios"] = "No registra"
+        pregrado["LineasPosgradoPrevias"] = "No registra"
+        return pregrado, posgrado
+
+    posgrado["ProgramaPosgradoPrevio"] = posgrado["CarreraHom"].fillna("").astype(str)
+    posgrado["LineaPosgradoPrevio"] = posgrado["ProgramaPosgradoPrevio"].apply(asignar_linea_programa)
+
+    resumen_posgrado = (
+        posgrado
+        .groupby("Identificador")
+        .agg({
+            "ProgramaPosgradoPrevio": lambda x: " | ".join(sorted(set([str(v) for v in x if str(v).strip() != ""]))),
+            "LineaPosgradoPrevio": lambda x: " | ".join(sorted(set([str(v) for v in x if str(v).strip() != ""])))
+        })
+        .reset_index()
+        .rename(columns={
+            "ProgramaPosgradoPrevio": "PosgradosUDLAPrevios",
+            "LineaPosgradoPrevio": "LineasPosgradoPrevias"
+        })
+    )
+
+    pregrado = pregrado.merge(
+        resumen_posgrado,
+        on="Identificador",
+        how="left"
+    )
+
+    pregrado["YaEstudioPosgradoUDLA"] = np.where(
+        pregrado["PosgradosUDLAPrevios"].notna(),
+        "Sí",
+        "No"
+    )
+
+    pregrado["PosgradosUDLAPrevios"] = pregrado["PosgradosUDLAPrevios"].fillna("No registra")
+    pregrado["LineasPosgradoPrevias"] = pregrado["LineasPosgradoPrevias"].fillna("No registra")
+
+    return pregrado, posgrado
+
+
+def obtener_laboral_sql(conn, identificadores):
+    ids = (
+        pd.Series(identificadores)
+        .dropna()
+        .astype(str)
+        .str.strip()
+        .unique()
+        .tolist()
+    )
+
+    cursor = conn.cursor()
+
+    cursor.execute("""
+    IF OBJECT_ID('tempdb..#ids_graduados') IS NOT NULL
+        DROP TABLE #ids_graduados;
+
+    CREATE TABLE #ids_graduados (
+        NUMAFI VARCHAR(30)
+    );
+    """)
+
+    cursor.fast_executemany = True
+
+    cursor.executemany(
+        "INSERT INTO #ids_graduados (NUMAFI) VALUES (?)",
+        [(i,) for i in ids]
+    )
+
+    conn.commit()
+
+    query = """
+    SELECT 
+        s.NUMAFI,
+        s.APENOMAFI,
+        s.TIPOEMPRES,
+        s.NOMEMP,
+        s.OCUAFI AS OCUPAFI,
+        s.SALARIO,
+        s.FECINGAFI,
+        s.ANIO,
+        s.MES
+    FROM Reportes.dbo.SIM_Y_ENE_26 s
+    INNER JOIN #ids_graduados i
+        ON CAST(s.NUMAFI AS VARCHAR(30)) COLLATE SQL_Latin1_General_CP1_CI_AI
+         = i.NUMAFI COLLATE SQL_Latin1_General_CP1_CI_AI;
+    """
+
+    laboral = pd.read_sql(query, conn)
+
+    if laboral.empty:
+        return laboral
+
+    laboral["NUMAFI"] = laboral["NUMAFI"].astype(str).str.strip()
+
+    laboral["FECINGAFI"] = pd.to_datetime(
+        laboral["FECINGAFI"],
+        errors="coerce",
+        dayfirst=True
+    )
+
+    laboral = laboral.sort_values(
+        by=["NUMAFI", "ANIO", "MES", "FECINGAFI"],
+        ascending=[True, True, True, True]
+    )
+
+    laboral_unico = laboral.drop_duplicates(
+        subset=["NUMAFI"],
+        keep="last"
+    )
+
+    return laboral_unico
+
+
+def cruzar_graduados_laboral(graduados_pregrado, laboral):
+    base = graduados_pregrado.merge(
+        laboral,
+        left_on="Identificador",
+        right_on="NUMAFI",
+        how="left"
+    )
+
+    base["TieneInformacionLaboral"] = np.where(
+        base["NUMAFI"].notna(),
+        "Con información laboral",
+        "Sin información laboral"
+    )
+
+    campos_laborales = ["TIPOEMPRES", "NOMEMP", "OCUPAFI"]
+
+    for col in campos_laborales:
+        if col not in base.columns:
+            base[col] = "Sin información laboral"
+        else:
+            base[col] = base[col].fillna("Sin información laboral")
+
+    if "SALARIO" not in base.columns:
+        base["SALARIO"] = np.nan
+
+    hoy = pd.Timestamp.today().normalize()
+
+    base["AniosDesdeGraduacion"] = (
+        (hoy - base["FechaGraduacion"]).dt.days / 365.25
+    ).round(1)
+
+    if "FECINGAFI" in base.columns:
+        base["FECINGAFI"] = pd.to_datetime(
+            base["FECINGAFI"],
+            errors="coerce",
+            dayfirst=True
+        )
+
+        base["AniosEnCargo"] = (
+            (hoy - base["FECINGAFI"]).dt.days / 365.25
+        ).round(1)
+
+        base["AniosEnCargo"] = base["AniosEnCargo"].fillna(0)
+    else:
+        base["AniosEnCargo"] = 0
+
+    return base
+
+
+def obtener_catalogo_udla(conn):
+    query = """
+    SELECT *
+    FROM DwhOperacional.dbo.Vw_CarreraFacultadArea_new;
+    """
+
+    catalogo = pd.read_sql(query, conn)
+
+    return catalogo
+
+
+def detectar_columna_programa(catalogo):
+    posibles_columnas = [
+        "CarreraHomologada",
+        "DesCarrera",
+        "Descarrera",
+        "DesCarreraUnificado",
+        "CarreraHom",
+        "CARRERAHOM",
+        "Carrera",
+        "CARRERA",
+        "NombreCarrera",
+        "NOMBRECARRERA",
+        "Programa",
+        "PROGRAMA",
+        "Descripcion",
+        "DESCRIPCION"
+    ]
+
+    for col in posibles_columnas:
+        if col in catalogo.columns:
+            return col
+
+    raise ValueError(
+        "No se pudo detectar la columna del programa. "
+        f"Columnas disponibles: {catalogo.columns.tolist()}"
+    )
+
+
+def preparar_catalogo_maestrias(catalogo, col_programa=None):
     catalogo_txt = catalogo.copy()
 
     for col in catalogo_txt.columns:
@@ -355,10 +492,11 @@ def preparar_catalogo_maestrias(catalogo, col_programa=None):
     return maestrias, catalogo_lineas
 
 
-def obtener_programas_por_linea(catalogo_lineas, linea, n=3):
-    """
-    Devuelve programas UDLA asociados a una línea de recomendación.
-    """
+def obtener_programas_por_linea(catalogo_lineas, linea, programas_excluir=None, n=3):
+    if programas_excluir is None:
+        programas_excluir = []
+
+    programas_excluir_norm = [normalizar_texto(p) for p in programas_excluir]
 
     programas = (
         catalogo_lineas.loc[
@@ -367,74 +505,183 @@ def obtener_programas_por_linea(catalogo_lineas, linea, n=3):
         ]
         .dropna()
         .drop_duplicates()
-        .head(n)
         .tolist()
     )
 
-    if len(programas) == 0:
+    programas_filtrados = []
+
+    for programa in programas:
+        programa_norm = normalizar_texto(programa)
+
+        if programa_norm not in programas_excluir_norm:
+            programas_filtrados.append(programa)
+
+    programas_filtrados = programas_filtrados[:n]
+
+    if len(programas_filtrados) == 0:
         return "Sin programa identificado en catálogo"
 
-    return " | ".join(programas)
+    return " | ".join(programas_filtrados)
+
+
+def ajustar_ranking_por_posgrado_previo(ranking, lineas_previas):
+    if ranking.empty:
+        return ranking
+
+    if pd.isna(lineas_previas) or str(lineas_previas).strip() in ["", "No registra"]:
+        return ranking
+
+    lineas_previas_lista = [
+        x.strip()
+        for x in str(lineas_previas).split("|")
+        if x.strip() != ""
+    ]
+
+    ranking = ranking.copy()
+
+    ranking["PenalizacionPosgradoPrevio"] = ranking["LineaMaestria"].apply(
+        lambda x: 35 if x in lineas_previas_lista else 0
+    )
+
+    ranking["Score"] = ranking["Score"] - ranking["PenalizacionPosgradoPrevio"]
+    ranking["Score"] = ranking["Score"].clip(lower=0)
+
+    ranking = ranking[ranking["Score"] > 0].copy()
+
+    ranking = (
+        ranking
+        .sort_values("Score", ascending=False)
+        .reset_index(drop=True)
+    )
+
+    return ranking
+
+
+def completar_ranking_si_faltan(ranking, lineas_previas):
+    lineas_fallback = [
+        ("MBA_ADMINISTRACION", 35),
+        ("GESTION_PROYECTOS", 30),
+        ("ANALITICA_DATOS", 25),
+        ("MARKETING_COMERCIAL", 20),
+        ("TECNOLOGIA", 20)
+    ]
+
+    ranking = ranking.copy()
+
+    existentes = set(ranking["LineaMaestria"].tolist()) if not ranking.empty else set()
+
+    lineas_previas_lista = []
+    if not pd.isna(lineas_previas) and str(lineas_previas).strip() not in ["", "No registra"]:
+        lineas_previas_lista = [
+            x.strip()
+            for x in str(lineas_previas).split("|")
+            if x.strip() != ""
+        ]
+
+    nuevos = []
+
+    for linea, score in lineas_fallback:
+        if linea not in existentes and linea not in lineas_previas_lista:
+            nuevos.append({"LineaMaestria": linea, "Score": score})
+
+        if len(ranking) + len(nuevos) >= 3:
+            break
+
+    if nuevos:
+        ranking = pd.concat([ranking, pd.DataFrame(nuevos)], ignore_index=True)
+
+    return ranking.head(3)
 
 
 def generar_recomendaciones(base, catalogo_lineas):
-    """
-    Genera recomendaciones Top 3 para cada graduado.
-    Incluye graduados con y sin información laboral.
-    """
-
     recomendaciones = []
 
     for _, row in base.iterrows():
         ranking = recomendar_lineas(row)
 
+        ranking = ajustar_ranking_por_posgrado_previo(
+            ranking,
+            row.get("LineasPosgradoPrevias", "No registra")
+        )
+
         if ranking.empty:
-            ranking = pd.DataFrame({
-                "LineaMaestria": [
-                    "MBA_ADMINISTRACION",
-                    "GESTION_PROYECTOS",
-                    "ANALITICA_DATOS"
-                ],
-                "Score": [35, 30, 25]
-            })
+            ranking = pd.DataFrame(columns=["LineaMaestria", "Score"])
+
+        ranking = completar_ranking_si_faltan(
+            ranking,
+            row.get("LineasPosgradoPrevias", "No registra")
+        )
 
         ranking = ranking.head(3).copy()
 
+        posgrados_previos = row.get("PosgradosUDLAPrevios", "No registra")
+        programas_excluir = []
+
+        if str(posgrados_previos).strip() not in ["", "No registra"]:
+            programas_excluir = [
+                x.strip()
+                for x in str(posgrados_previos).split("|")
+                if x.strip() != ""
+            ]
+
         ranking["Identificador"] = row.get("Identificador", "")
         ranking["Estudiante"] = row.get("Estudiante", "")
+        ranking["MailUDLA"] = row.get("MailUDLA", "")
+        ranking["Genero"] = row.get("Genero", "")
         ranking["CarreraHom"] = row.get("CarreraHom", "")
+        ranking["desfacultad"] = row.get("desfacultad", "")
         ranking["Titulo"] = row.get("Titulo", "")
+        ranking["FechaGraduacion"] = row.get("FechaGraduacion", pd.NaT)
+        ranking["Modalidad"] = row.get("Modalidad", "")
+        ranking["Semestre"] = row.get("Semestre", "")
         ranking["NOMEMP"] = row.get("NOMEMP", "Sin información laboral")
         ranking["TIPOEMPRES"] = row.get("TIPOEMPRES", "Sin información laboral")
         ranking["OCUPAFI"] = row.get("OCUPAFI", "Sin información laboral")
+        ranking["SALARIO"] = row.get("SALARIO", np.nan)
+        ranking["FECINGAFI"] = row.get("FECINGAFI", pd.NaT)
         ranking["TieneInformacionLaboral"] = row.get("TieneInformacionLaboral", "Sin información laboral")
         ranking["AniosEnCargo"] = row.get("AniosEnCargo", 0)
         ranking["AniosDesdeGraduacion"] = row.get("AniosDesdeGraduacion", np.nan)
+        ranking["YaEstudioPosgradoUDLA"] = row.get("YaEstudioPosgradoUDLA", "No")
+        ranking["PosgradosUDLAPrevios"] = row.get("PosgradosUDLAPrevios", "No registra")
+        ranking["LineasPosgradoPrevias"] = row.get("LineasPosgradoPrevias", "No registra")
 
         ranking["ProgramasSugeridosUDLA"] = ranking["LineaMaestria"].apply(
-            lambda linea: obtener_programas_por_linea(catalogo_lineas, linea)
+            lambda linea: obtener_programas_por_linea(
+                catalogo_lineas,
+                linea,
+                programas_excluir=programas_excluir
+            )
         )
 
         ranking["OrdenRecomendacion"] = range(1, len(ranking) + 1)
 
         recomendaciones.append(ranking)
 
-    if len(recomendaciones) == 0:
-        return pd.DataFrame(), pd.DataFrame()
-
     recomendaciones_larga = pd.concat(recomendaciones, ignore_index=True)
 
     campos_index = [
         "Identificador",
         "Estudiante",
+        "MailUDLA",
+        "Genero",
         "CarreraHom",
+        "desfacultad",
         "Titulo",
+        "FechaGraduacion",
+        "Modalidad",
+        "Semestre",
         "NOMEMP",
         "TIPOEMPRES",
         "OCUPAFI",
+        "SALARIO",
+        "FECINGAFI",
         "TieneInformacionLaboral",
         "AniosEnCargo",
-        "AniosDesdeGraduacion"
+        "AniosDesdeGraduacion",
+        "YaEstudioPosgradoUDLA",
+        "PosgradosUDLAPrevios",
+        "LineasPosgradoPrevias"
     ]
 
     for col in campos_index:
@@ -446,6 +693,7 @@ def generar_recomendaciones(base, catalogo_lineas):
     recomendaciones_larga["OCUPAFI"] = recomendaciones_larga["OCUPAFI"].fillna("Sin información laboral")
     recomendaciones_larga["TieneInformacionLaboral"] = recomendaciones_larga["TieneInformacionLaboral"].fillna("Sin información laboral")
     recomendaciones_larga["AniosEnCargo"] = recomendaciones_larga["AniosEnCargo"].fillna(0)
+    recomendaciones_larga["AniosDesdeGraduacion"] = recomendaciones_larga["AniosDesdeGraduacion"].fillna(0)
 
     top3 = recomendaciones_larga.pivot_table(
         index=campos_index,
@@ -472,3 +720,143 @@ def generar_recomendaciones(base, catalogo_lineas):
     )
 
     return recomendaciones_larga, top3
+
+
+def preparar_resultado_sql(top3):
+    df = top3.copy()
+
+    columnas_salida = [
+        "Identificador",
+        "Estudiante",
+        "MailUDLA",
+        "Genero",
+        "CarreraHom",
+        "desfacultad",
+        "Titulo",
+        "FechaGraduacion",
+        "Modalidad",
+        "Semestre",
+        "NOMEMP",
+        "TIPOEMPRES",
+        "OCUPAFI",
+        "SALARIO",
+        "FECINGAFI",
+        "TieneInformacionLaboral",
+        "AniosEnCargo",
+        "AniosDesdeGraduacion",
+        "YaEstudioPosgradoUDLA",
+        "PosgradosUDLAPrevios",
+        "LineasPosgradoPrevias",
+        "Recomendacion_1",
+        "Score_1",
+        "Programas_UDLA_1",
+        "Recomendacion_2",
+        "Score_2",
+        "Programas_UDLA_2",
+        "Recomendacion_3",
+        "Score_3",
+        "Programas_UDLA_3",
+        "Justificacion_Recomendacion_1"
+    ]
+
+    for col in columnas_salida:
+        if col not in df.columns:
+            df[col] = None
+
+    df = df[columnas_salida].copy()
+
+    df["FechaEjecucion"] = pd.Timestamp.now()
+
+    columnas_finales = ["FechaEjecucion"] + columnas_salida
+
+    df = df[columnas_finales]
+
+    for col in df.columns:
+        if df[col].dtype == "object":
+            df[col] = df[col].replace({np.nan: None})
+        else:
+            df[col] = df[col].where(pd.notna(df[col]), None)
+
+    return df
+
+
+def cargar_resultado_bdd_idm(conn, top3):
+    df = preparar_resultado_sql(top3)
+
+    cursor = conn.cursor()
+
+    cursor.execute(f"""
+    IF OBJECT_ID(N'{TABLA_RESULTADO_BDD}', N'U') IS NOT NULL
+        DROP TABLE {TABLA_RESULTADO_BDD};
+
+    CREATE TABLE {TABLA_RESULTADO_BDD} (
+        FechaEjecucion DATETIME2 NULL,
+        Identificador VARCHAR(30) NULL,
+        Estudiante NVARCHAR(255) NULL,
+        MailUDLA NVARCHAR(255) NULL,
+        Genero NVARCHAR(20) NULL,
+        CarreraHom NVARCHAR(255) NULL,
+        desfacultad NVARCHAR(255) NULL,
+        Titulo NVARCHAR(255) NULL,
+        FechaGraduacion DATE NULL,
+        Modalidad NVARCHAR(100) NULL,
+        Semestre NVARCHAR(50) NULL,
+        NOMEMP NVARCHAR(255) NULL,
+        TIPOEMPRES NVARCHAR(255) NULL,
+        OCUPAFI NVARCHAR(255) NULL,
+        SALARIO FLOAT NULL,
+        FECINGAFI DATE NULL,
+        TieneInformacionLaboral NVARCHAR(100) NULL,
+        AniosEnCargo FLOAT NULL,
+        AniosDesdeGraduacion FLOAT NULL,
+        YaEstudioPosgradoUDLA NVARCHAR(10) NULL,
+        PosgradosUDLAPrevios NVARCHAR(MAX) NULL,
+        LineasPosgradoPrevias NVARCHAR(MAX) NULL,
+        Recomendacion_1 NVARCHAR(100) NULL,
+        Score_1 FLOAT NULL,
+        Programas_UDLA_1 NVARCHAR(MAX) NULL,
+        Recomendacion_2 NVARCHAR(100) NULL,
+        Score_2 FLOAT NULL,
+        Programas_UDLA_2 NVARCHAR(MAX) NULL,
+        Recomendacion_3 NVARCHAR(100) NULL,
+        Score_3 FLOAT NULL,
+        Programas_UDLA_3 NVARCHAR(MAX) NULL,
+        Justificacion_Recomendacion_1 NVARCHAR(MAX) NULL
+    );
+    """)
+
+    conn.commit()
+
+    columnas = df.columns.tolist()
+
+    placeholders = ",".join(["?"] * len(columnas))
+    columnas_sql = ",".join([f"[{c}]" for c in columnas])
+
+    insert_sql = f"""
+    INSERT INTO {TABLA_RESULTADO_BDD} ({columnas_sql})
+    VALUES ({placeholders});
+    """
+
+    registros = []
+
+    for _, row in df.iterrows():
+        fila = []
+
+        for col in columnas:
+            valor = row[col]
+
+            if pd.isna(valor):
+                valor = None
+
+            if isinstance(valor, pd.Timestamp):
+                valor = valor.to_pydatetime()
+
+            fila.append(valor)
+
+        registros.append(tuple(fila))
+
+    cursor.fast_executemany = True
+    cursor.executemany(insert_sql, registros)
+    conn.commit()
+
+    return len(registros)

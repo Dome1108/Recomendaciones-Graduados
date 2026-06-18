@@ -22,31 +22,23 @@ sys.path.append(str(SRC_DIR))
 
 from conexion_sql import conectar_sql
 from pipeline_recomendaciones import (
-    cargar_graduados,
+    cargar_graduados_sql,
+    preparar_graduados_pregrado_y_posgrado,
     obtener_laboral_sql,
     cruzar_graduados_laboral,
     obtener_catalogo_udla,
     preparar_catalogo_maestrias,
-    generar_recomendaciones
+    generar_recomendaciones,
+    cargar_resultado_bdd_idm,
+    TABLA_RESULTADO_BDD
 )
 
 # %%
-RUTA_GRADUADOS = BASE_DIR / "data" / "graduados.xlsx"
 RUTA_SALIDA = BASE_DIR / "outputs" / "recomendaciones_maestrias_udla.xlsx"
 
 print("Ruta base:", BASE_DIR)
-print("Ruta graduados:", RUTA_GRADUADOS)
 print("Ruta salida:", RUTA_SALIDA)
-
-# %%
-graduados = cargar_graduados(RUTA_GRADUADOS)
-
-print("Filas graduados:", len(graduados))
-display(graduados.head())
-
-# %%
-print("Columnas graduados:")
-print(graduados.columns.tolist())
+print("Tabla destino:", TABLA_RESULTADO_BDD)
 
 # %%
 conn = conectar_sql()
@@ -54,9 +46,38 @@ conn = conectar_sql()
 print("Conexión SQL exitosa")
 
 # %%
+graduados_total = cargar_graduados_sql(conn)
+
+print("Filas Vw_Graduados:", len(graduados_total))
+display(graduados_total.head())
+
+# %%
+graduados_pregrado, graduados_posgrado = preparar_graduados_pregrado_y_posgrado(
+    graduados_total
+)
+
+print("Filas pregrado:", len(graduados_pregrado))
+print("Filas posgrado:", len(graduados_posgrado))
+print("Personas con posgrado UDLA previo:", (graduados_pregrado["YaEstudioPosgradoUDLA"] == "Sí").sum())
+
+display(
+    graduados_pregrado[
+        [
+            "Identificador",
+            "Estudiante",
+            "CarreraHom",
+            "Titulo",
+            "FechaGraduacion",
+            "YaEstudioPosgradoUDLA",
+            "PosgradosUDLAPrevios"
+        ]
+    ].head(20)
+)
+
+# %%
 laboral = obtener_laboral_sql(
     conn=conn,
-    identificadores=graduados["Identificador"]
+    identificadores=graduados_pregrado["Identificador"]
 )
 
 print("Filas laborales encontradas:", len(laboral))
@@ -64,7 +85,7 @@ display(laboral.head())
 
 # %%
 base = cruzar_graduados_laboral(
-    graduados=graduados,
+    graduados_pregrado=graduados_pregrado,
     laboral=laboral
 )
 
@@ -81,9 +102,10 @@ columnas_preview = [
     "NOMEMP",
     "TIPOEMPRES",
     "OCUPAFI",
-    "FECINGAFI",
     "AniosDesdeGraduacion",
-    "AniosEnCargo"
+    "AniosEnCargo",
+    "YaEstudioPosgradoUDLA",
+    "PosgradosUDLAPrevios"
 ]
 
 columnas_preview = [c for c in columnas_preview if c in base.columns]
@@ -95,10 +117,6 @@ catalogo = obtener_catalogo_udla(conn)
 
 print("Filas catálogo:", len(catalogo))
 display(catalogo.head())
-
-# %%
-print("Columnas catálogo:")
-print(catalogo.columns.tolist())
 
 # %%
 maestrias, catalogo_lineas = preparar_catalogo_maestrias(catalogo)
@@ -136,10 +154,9 @@ columnas_validacion = [
     "Titulo",
     "TieneInformacionLaboral",
     "NOMEMP",
-    "TIPOEMPRES",
     "OCUPAFI",
-    "AniosEnCargo",
-    "AniosDesdeGraduacion",
+    "YaEstudioPosgradoUDLA",
+    "PosgradosUDLAPrevios",
     "Recomendacion_1",
     "Score_1",
     "Programas_UDLA_1",
@@ -160,6 +177,9 @@ display(top3[columnas_validacion].head(30))
 RUTA_SALIDA.parent.mkdir(parents=True, exist_ok=True)
 
 with pd.ExcelWriter(RUTA_SALIDA, engine="openpyxl") as writer:
+    graduados_total.to_excel(writer, sheet_name="Vw_Graduados", index=False)
+    graduados_pregrado.to_excel(writer, sheet_name="Graduados_pregrado", index=False)
+    graduados_posgrado.to_excel(writer, sheet_name="Graduados_posgrado", index=False)
     base.to_excel(writer, sheet_name="Base_graduados_laboral", index=False)
     maestrias.to_excel(writer, sheet_name="Catalogo_maestrias", index=False)
     catalogo_lineas.to_excel(writer, sheet_name="Lineas_catalogo", index=False)
@@ -168,3 +188,12 @@ with pd.ExcelWriter(RUTA_SALIDA, engine="openpyxl") as writer:
 
 print("Archivo exportado en:")
 print(RUTA_SALIDA)
+
+# %%
+filas_cargadas = cargar_resultado_bdd_idm(
+    conn=conn,
+    top3=top3
+)
+
+print(f"Tabla cargada en {TABLA_RESULTADO_BDD}")
+print(f"Filas cargadas: {filas_cargadas}")

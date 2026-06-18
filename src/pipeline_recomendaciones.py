@@ -120,6 +120,8 @@ def detectar_tipo_nivel(row):
         "POSTGRADO",
         "MAESTR",
         "MAGISTER",
+        "MASTER",
+        "MÁSTER",
         "ESPECIALIZ",
         "DOCTORADO",
         "PHD"
@@ -399,11 +401,6 @@ def obtener_laboral_sql(conn, identificadores):
 
 
 def obtener_laboral_linkedin_sql(conn, identificadores):
-    """
-    Lee toda la tabla de LinkedIn y filtra en Python.
-    Esto evita errores de cruce por tipos de dato, collation o temp tables.
-    """
-
     ids = (
         pd.Series(identificadores)
         .dropna()
@@ -418,16 +415,16 @@ def obtener_laboral_linkedin_sql(conn, identificadores):
 
     query = """
     SELECT
-        CAST(cedula AS VARCHAR(30)) AS NUMAFI,
-        nombre AS APENOMAFI,
-        carrera AS CarreraLinkedIn,
-        empresa AS NOMEMP,
-        cargo AS OCUPAFI,
-        tamanoEmpresa AS TamanoEmpresaLinkedIn,
-        fechaIngreso AS FECINGAFI,
-        paisTrabajo AS PaisTrabajoLinkedIn,
-        anioGraduacion AS AnioGraduacionLinkedIn
-    FROM BDD_Proyectos.mercados.EmpleabilidadLinkedin;
+        CAST([cedula] AS VARCHAR(30)) AS NUMAFI,
+        [nombre] AS APENOMAFI,
+        [carrera] AS CarreraLinkedIn,
+        [empresa] AS NOMEMP,
+        [cargo] AS OCUPAFI,
+        [tamanioEmpresa] AS TamanoEmpresaLinkedIn,
+        [fechaIngreso] AS FECINGAFI,
+        [paisTrabajo] AS PaisTrabajoLinkedIn,
+        [anioGraduacion] AS AnioGraduacionLinkedIn
+    FROM [BDD_Proyectos].[mercados].[EmpleabilidadLinkedin];
     """
 
     linkedin = pd.read_sql(query, conn)
@@ -687,29 +684,68 @@ def detectar_columna_programa(catalogo):
 
 
 def preparar_catalogo_maestrias(catalogo, col_programa=None):
-    catalogo_txt = catalogo.copy()
+    """
+    Prepara únicamente oferta de posgrado/maestría.
 
-    for col in catalogo_txt.columns:
-        if catalogo_txt[col].dtype == "object":
-            catalogo_txt[col] = catalogo_txt[col].apply(normalizar_texto)
+    Corrección importante:
+    - Ya no se filtra usando cualquier columna del catálogo, porque eso permitía que
+      entren carreras de pregrado.
+    - Se usa NivelEstudio / Regimen / nombre del programa.
+    - Se excluye explícitamente PREGRADO y DIPLOMADOS.
+    """
 
-    columnas_texto = catalogo_txt.select_dtypes(include="object").columns
+    catalogo_base = catalogo.copy()
 
-    mask_maestria = catalogo_txt[columnas_texto].apply(
-        lambda fila: fila.astype(str).str.contains(
-            "MAESTR|MASTER|POSGRADO|POSTGRADO|ESPECIALIZ",
-            regex=True
-        ).any(),
-        axis=1
+    catalogo_base.columns = (
+        catalogo_base.columns
+        .astype(str)
+        .str.strip()
+        .str.replace("\ufeff", "", regex=False)
     )
 
-    maestrias = catalogo.loc[mask_maestria].copy()
+    if col_programa is None:
+        col_programa = detectar_columna_programa(catalogo_base)
+
+    programa_norm = catalogo_base[col_programa].apply(normalizar_texto)
+
+    if "NivelEstudio" in catalogo_base.columns:
+        nivel_norm = catalogo_base["NivelEstudio"].apply(normalizar_texto)
+    else:
+        nivel_norm = pd.Series([""] * len(catalogo_base), index=catalogo_base.index)
+
+    if "Regimen" in catalogo_base.columns:
+        regimen_norm = catalogo_base["Regimen"].apply(normalizar_texto)
+    else:
+        regimen_norm = pd.Series([""] * len(catalogo_base), index=catalogo_base.index)
+
+    if "Agrupacion" in catalogo_base.columns:
+        agrupacion_norm = catalogo_base["Agrupacion"].apply(normalizar_texto)
+    else:
+        agrupacion_norm = pd.Series([""] * len(catalogo_base), index=catalogo_base.index)
+
+    patron_posgrado = r"POSGRADO|POSTGRADO|MAESTR|MAGISTER|MASTER|MÁSTER|ESPECIALIZ"
+    patron_excluir = r"PREGRADO|DIPLOMADO|DIPLOMADOS|CURSO|CERTIFICADO|SEMINARIO|TALLER"
+
+    mask_posgrado = (
+        nivel_norm.str.contains(patron_posgrado, regex=True, na=False)
+        | regimen_norm.str.contains(patron_posgrado, regex=True, na=False)
+        | agrupacion_norm.str.contains(patron_posgrado, regex=True, na=False)
+        | programa_norm.str.contains(patron_posgrado, regex=True, na=False)
+    )
+
+    mask_excluir = (
+        nivel_norm.str.contains("PREGRADO", regex=True, na=False)
+        | regimen_norm.str.contains("PREGRADO", regex=True, na=False)
+        | programa_norm.str.contains(patron_excluir, regex=True, na=False)
+    )
+
+    maestrias = catalogo.loc[mask_posgrado & ~mask_excluir].copy()
 
     if maestrias.empty:
-        raise ValueError("No se detectaron maestrías/especializaciones en el catálogo.")
-
-    if col_programa is None:
-        col_programa = detectar_columna_programa(maestrias)
+        raise ValueError(
+            "No se detectaron programas de posgrado/maestría en el catálogo. "
+            "Revisa NivelEstudio, Regimen o el nombre del programa."
+        )
 
     maestrias["ProgramaMaestria"] = maestrias[col_programa].astype(str)
     maestrias["LineaMaestria"] = maestrias["ProgramaMaestria"].apply(
@@ -722,6 +758,14 @@ def preparar_catalogo_maestrias(catalogo, col_programa=None):
         .sort_values(["LineaMaestria", "ProgramaMaestria"])
         .reset_index(drop=True)
     )
+
+    catalogo_lineas = catalogo_lineas[
+        catalogo_lineas["ProgramaMaestria"].apply(normalizar_texto).str.contains(
+            patron_excluir,
+            regex=True,
+            na=False
+        ) == False
+    ].copy()
 
     return maestrias, catalogo_lineas
 

@@ -5,3 +5,6 @@ pyodbc
 python-dotenv
 jupyter
 notebook
+ipython
+streamlit
+plotly

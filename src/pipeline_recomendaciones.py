@@ -23,12 +23,14 @@ def estandarizar_columnas_graduados(graduados):
         "Identificador": "Identificador",
         "Cedula": "Identificador",
         "Cédula": "Identificador",
+        "cedula": "Identificador",
         "NUMAFI": "Identificador",
 
         "CarreraHomologada": "CarreraHom",
         "CarreraHom": "CarreraHom",
         "DesCarrera": "CarreraHom",
         "Descarrera": "CarreraHom",
+        "carrera": "CarreraHom",
 
         "desfacultad": "desfacultad",
         "DesFacultad": "desfacultad",
@@ -42,6 +44,7 @@ def estandarizar_columnas_graduados(graduados):
         "Titulo": "Titulo",
         "FechaGraduacion": "FechaGraduacion",
         "Estudiante": "Estudiante",
+        "nombre": "Estudiante",
         "MailUDLA": "MailUDLA",
         "Genero": "Genero",
         "Modalidad": "Modalidad",
@@ -390,19 +393,221 @@ def obtener_laboral_sql(conn, identificadores):
         keep="last"
     )
 
+    laboral_unico["FuenteInformacionLaboral"] = "SIM"
+
     return laboral_unico
 
 
-def cruzar_graduados_laboral(graduados_pregrado, laboral):
+def obtener_laboral_linkedin_sql(conn, identificadores):
+    ids = (
+        pd.Series(identificadores)
+        .dropna()
+        .astype(str)
+        .str.strip()
+        .unique()
+        .tolist()
+    )
+
+    cursor = conn.cursor()
+
+    cursor.execute("""
+    IF OBJECT_ID('tempdb..#ids_graduados_linkedin') IS NOT NULL
+        DROP TABLE #ids_graduados_linkedin;
+
+    CREATE TABLE #ids_graduados_linkedin (
+        NUMAFI VARCHAR(30)
+    );
+    """)
+
+    cursor.fast_executemany = True
+
+    cursor.executemany(
+        "INSERT INTO #ids_graduados_linkedin (NUMAFI) VALUES (?)",
+        [(i,) for i in ids]
+    )
+
+    conn.commit()
+
+    query = """
+    SELECT
+        CAST(l.cedula AS VARCHAR(30)) AS NUMAFI,
+        l.nombre AS APENOMAFI,
+        l.carrera AS CarreraLinkedIn,
+        l.empresa AS NOMEMP,
+        l.cargo AS OCUPAFI,
+        l.tamanoEmpresa AS TamanoEmpresaLinkedIn,
+        l.fechaIngreso AS FECINGAFI,
+        l.paisTrabajo AS PaisTrabajoLinkedIn,
+        l.anioGraduacion AS AnioGraduacionLinkedIn
+    FROM BDD_Proyectos.mercados.EmpleabilidadLinkedin l
+    INNER JOIN #ids_graduados_linkedin i
+        ON CAST(l.cedula AS VARCHAR(30)) COLLATE SQL_Latin1_General_CP1_CI_AI
+         = i.NUMAFI COLLATE SQL_Latin1_General_CP1_CI_AI;
+    """
+
+    linkedin = pd.read_sql(query, conn)
+
+    if linkedin.empty:
+        return linkedin
+
+    linkedin["NUMAFI"] = linkedin["NUMAFI"].astype(str).str.strip()
+
+    linkedin["FECINGAFI"] = pd.to_datetime(
+        linkedin["FECINGAFI"],
+        errors="coerce",
+        dayfirst=True
+    )
+
+    hoy = pd.Timestamp.today().normalize()
+
+    linkedin["FechaIngresoValida"] = linkedin["FECINGAFI"]
+
+    linkedin.loc[
+        (linkedin["FechaIngresoValida"] < pd.Timestamp("1970-01-01"))
+        | (linkedin["FechaIngresoValida"] > hoy + pd.DateOffset(years=1)),
+        "FechaIngresoValida"
+    ] = pd.NaT
+
+    linkedin["TieneEmpresaLinkedIn"] = np.where(
+        linkedin["NOMEMP"].notna() & (linkedin["NOMEMP"].astype(str).str.strip() != ""),
+        1,
+        0
+    )
+
+    linkedin["TieneCargoLinkedIn"] = np.where(
+        linkedin["OCUPAFI"].notna() & (linkedin["OCUPAFI"].astype(str).str.strip() != ""),
+        1,
+        0
+    )
+
+    linkedin = linkedin.sort_values(
+        by=[
+            "NUMAFI",
+            "FechaIngresoValida",
+            "TieneEmpresaLinkedIn",
+            "TieneCargoLinkedIn"
+        ],
+        ascending=[True, True, False, False],
+        na_position="last"
+    )
+
+    linkedin_unico = linkedin.drop_duplicates(
+        subset=["NUMAFI"],
+        keep="first"
+    ).copy()
+
+    linkedin_unico["TIPOEMPRES"] = "LINKEDIN"
+    linkedin_unico["SALARIO"] = np.nan
+    linkedin_unico["ANIO"] = linkedin_unico["FECINGAFI"].dt.year
+    linkedin_unico["MES"] = linkedin_unico["FECINGAFI"].dt.month
+    linkedin_unico["FuenteInformacionLaboral"] = "LINKEDIN"
+
+    columnas_salida = [
+        "NUMAFI",
+        "APENOMAFI",
+        "TIPOEMPRES",
+        "NOMEMP",
+        "OCUPAFI",
+        "SALARIO",
+        "FECINGAFI",
+        "ANIO",
+        "MES",
+        "FuenteInformacionLaboral",
+        "TamanoEmpresaLinkedIn",
+        "PaisTrabajoLinkedIn",
+        "AnioGraduacionLinkedIn"
+    ]
+
+    return linkedin_unico[columnas_salida]
+
+
+def cruzar_graduados_laboral(graduados_pregrado, laboral, laboral_linkedin=None):
+    laboral_sim = laboral.copy()
+
+    if not laboral_sim.empty:
+        laboral_sim["FuenteInformacionLaboral"] = "SIM"
+        laboral_sim["TamanoEmpresaLinkedIn"] = np.nan
+        laboral_sim["PaisTrabajoLinkedIn"] = np.nan
+        laboral_sim["AnioGraduacionLinkedIn"] = np.nan
+
+    if laboral_linkedin is None:
+        laboral_linkedin = pd.DataFrame()
+
+    if not laboral_linkedin.empty:
+        laboral_linkedin = laboral_linkedin.copy()
+        laboral_linkedin["FuenteInformacionLaboral"] = "LINKEDIN"
+
+    columnas_empleo = [
+        "NUMAFI",
+        "APENOMAFI",
+        "TIPOEMPRES",
+        "NOMEMP",
+        "OCUPAFI",
+        "SALARIO",
+        "FECINGAFI",
+        "ANIO",
+        "MES",
+        "FuenteInformacionLaboral",
+        "TamanoEmpresaLinkedIn",
+        "PaisTrabajoLinkedIn",
+        "AnioGraduacionLinkedIn"
+    ]
+
+    for col in columnas_empleo:
+        if col not in laboral_sim.columns:
+            laboral_sim[col] = np.nan
+
+        if col not in laboral_linkedin.columns:
+            laboral_linkedin[col] = np.nan
+
+    empleo_combinado = pd.concat(
+        [
+            laboral_sim[columnas_empleo],
+            laboral_linkedin[columnas_empleo]
+        ],
+        ignore_index=True
+    )
+
+    if not empleo_combinado.empty:
+        empleo_combinado["NUMAFI"] = empleo_combinado["NUMAFI"].astype(str).str.strip()
+
+        empleo_combinado["PrioridadFuenteLaboral"] = empleo_combinado["FuenteInformacionLaboral"].map({
+            "SIM": 1,
+            "LINKEDIN": 2
+        }).fillna(9)
+
+        empleo_combinado["FECINGAFI"] = pd.to_datetime(
+            empleo_combinado["FECINGAFI"],
+            errors="coerce",
+            dayfirst=True
+        )
+
+        empleo_combinado = empleo_combinado.sort_values(
+            by=["NUMAFI", "PrioridadFuenteLaboral", "FECINGAFI"],
+            ascending=[True, True, True],
+            na_position="last"
+        )
+
+        empleo_preferente = empleo_combinado.drop_duplicates(
+            subset=["NUMAFI"],
+            keep="first"
+        ).copy()
+    else:
+        empleo_preferente = pd.DataFrame(columns=columnas_empleo)
+
     base = graduados_pregrado.merge(
-        laboral,
+        empleo_preferente,
         left_on="Identificador",
         right_on="NUMAFI",
         how="left"
     )
 
+    base["FuenteInformacionLaboral"] = base["FuenteInformacionLaboral"].fillna(
+        "SIN_INFORMACION_LABORAL"
+    )
+
     base["TieneInformacionLaboral"] = np.where(
-        base["NUMAFI"].notna(),
+        base["FuenteInformacionLaboral"].isin(["SIM", "LINKEDIN"]),
         "Con información laboral",
         "Sin información laboral"
     )
@@ -501,9 +706,7 @@ def preparar_catalogo_maestrias(catalogo, col_programa=None):
     maestrias = catalogo.loc[mask_maestria].copy()
 
     if maestrias.empty:
-        raise ValueError(
-            "No se detectaron maestrías/especializaciones en el catálogo."
-        )
+        raise ValueError("No se detectaron maestrías/especializaciones en el catálogo.")
 
     if col_programa is None:
         col_programa = detectar_columna_programa(maestrias)
@@ -699,6 +902,10 @@ def generar_recomendaciones(base, catalogo_lineas):
         ranking["SALARIO"] = row.get("SALARIO", np.nan)
         ranking["FECINGAFI"] = row.get("FECINGAFI", pd.NaT)
         ranking["TieneInformacionLaboral"] = row.get("TieneInformacionLaboral", "Sin información laboral")
+        ranking["FuenteInformacionLaboral"] = row.get("FuenteInformacionLaboral", "SIN_INFORMACION_LABORAL")
+        ranking["TamanoEmpresaLinkedIn"] = row.get("TamanoEmpresaLinkedIn", np.nan)
+        ranking["PaisTrabajoLinkedIn"] = row.get("PaisTrabajoLinkedIn", np.nan)
+        ranking["AnioGraduacionLinkedIn"] = row.get("AnioGraduacionLinkedIn", np.nan)
         ranking["AniosEnCargo"] = row.get("AniosEnCargo", 0)
         ranking["AniosDesdeGraduacion"] = row.get("AniosDesdeGraduacion", np.nan)
         ranking["YaEstudioPosgradoUDLA"] = row.get("YaEstudioPosgradoUDLA", "No")
@@ -741,6 +948,10 @@ def generar_recomendaciones(base, catalogo_lineas):
         "SALARIO",
         "FECINGAFI",
         "TieneInformacionLaboral",
+        "FuenteInformacionLaboral",
+        "TamanoEmpresaLinkedIn",
+        "PaisTrabajoLinkedIn",
+        "AnioGraduacionLinkedIn",
         "AniosEnCargo",
         "AniosDesdeGraduacion",
         "YaEstudioPosgradoUDLA",
@@ -804,6 +1015,10 @@ def preparar_resultado_sql(top3):
         "SALARIO",
         "FECINGAFI",
         "TieneInformacionLaboral",
+        "FuenteInformacionLaboral",
+        "TamanoEmpresaLinkedIn",
+        "PaisTrabajoLinkedIn",
+        "AnioGraduacionLinkedIn",
         "AniosEnCargo",
         "AniosDesdeGraduacion",
         "YaEstudioPosgradoUDLA",
@@ -870,6 +1085,10 @@ def cargar_resultado_bdd_idm(conn, top3):
         SALARIO FLOAT NULL,
         FECINGAFI DATE NULL,
         TieneInformacionLaboral NVARCHAR(100) NULL,
+        FuenteInformacionLaboral NVARCHAR(100) NULL,
+        TamanoEmpresaLinkedIn NVARCHAR(100) NULL,
+        PaisTrabajoLinkedIn NVARCHAR(255) NULL,
+        AnioGraduacionLinkedIn NVARCHAR(50) NULL,
         AniosEnCargo FLOAT NULL,
         AniosDesdeGraduacion FLOAT NULL,
         YaEstudioPosgradoUDLA NVARCHAR(10) NULL,

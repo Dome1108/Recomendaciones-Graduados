@@ -8,10 +8,11 @@ load_dotenv()
 def conectar_sql():
     """
     Crea conexión a SQL Server usando variables del archivo .env.
+    La base por defecto será BDD_IDM, pero las consultas pueden usar nombres fully qualified.
     """
 
-    server = os.getenv("SQL_SERVER")
-    database = os.getenv("SQL_DATABASE")
+    server = os.getenv("SQL_SERVER", "SNBI03")
+    database = os.getenv("SQL_DATABASE", "BDD_IDM")
     driver = os.getenv("SQL_DRIVER", "ODBC Driver 17 for SQL Server")
 
     conn_str = (

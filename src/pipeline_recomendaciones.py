@@ -30,7 +30,10 @@ def cargar_graduados(ruta_excel):
         "Genero": "Genero",
         "Modalidad": "Modalidad",
         "Semestre": "Semestre",
-        "regimen": "regimen"
+        "regimen": "regimen",
+        "Tipo_Trabajo": "Tipo_Trabajo",
+        "NotaFinalCarrera": "NotaFinalCarrera",
+        "PeriodoTemporal": "PeriodoTemporal"
     }
 
     graduados = graduados.rename(columns=mapa_columnas)
@@ -142,25 +145,31 @@ def cruzar_graduados_laboral(graduados, laboral):
 
     hoy = pd.Timestamp.today().normalize()
 
-    base["FechaGraduacion"] = pd.to_datetime(
-        base["FechaGraduacion"],
-        errors="coerce",
-        dayfirst=True
-    )
+    if "FechaGraduacion" in base.columns:
+        base["FechaGraduacion"] = pd.to_datetime(
+            base["FechaGraduacion"],
+            errors="coerce",
+            dayfirst=True
+        )
 
-    base["FECINGAFI"] = pd.to_datetime(
-        base["FECINGAFI"],
-        errors="coerce",
-        dayfirst=True
-    )
+        base["AniosDesdeGraduacion"] = (
+            (hoy - base["FechaGraduacion"]).dt.days / 365.25
+        ).round(1)
+    else:
+        base["AniosDesdeGraduacion"] = np.nan
 
-    base["AniosDesdeGraduacion"] = (
-        (hoy - base["FechaGraduacion"]).dt.days / 365.25
-    ).round(1)
+    if "FECINGAFI" in base.columns:
+        base["FECINGAFI"] = pd.to_datetime(
+            base["FECINGAFI"],
+            errors="coerce",
+            dayfirst=True
+        )
 
-    base["AniosEnCargo"] = (
-        (hoy - base["FECINGAFI"]).dt.days / 365.25
-    ).round(1)
+        base["AniosEnCargo"] = (
+            (hoy - base["FECINGAFI"]).dt.days / 365.25
+        ).round(1)
+    else:
+        base["AniosEnCargo"] = np.nan
 
     return base
 
@@ -182,10 +191,14 @@ def obtener_catalogo_udla(conn):
 
 def detectar_columna_programa(catalogo):
     """
-    Intenta detectar la columna donde está el nombre del programa.
+    Detecta la columna donde está el nombre del programa/carrera.
     """
 
     posibles_columnas = [
+        "CarreraHomologada",
+        "DesCarrera",
+        "Descarrera",
+        "DesCarreraUnificado",
         "CarreraHom",
         "CARRERAHOM",
         "Carrera",
@@ -215,37 +228,64 @@ def asignar_linea_programa(nombre_programa):
 
     txt = normalizar_texto(nombre_programa)
 
-    if any(p in txt for p in ["FINANZ", "BANCA", "FINANCI", "RIESGO", "TRIBUT", "MERCADO DE VALORES"]):
+    if any(p in txt for p in [
+        "FINANZ", "BANCA", "FINANCI", "RIESGO", "TRIBUT",
+        "MERCADO DE VALORES", "CONTABIL", "AUDITOR"
+    ]):
         return "FINANZAS_BANCA"
 
-    if any(p in txt for p in ["DATA", "DATOS", "ANALYTICS", "ANALITICA", "BIG DATA", "CIENCIA DE DATOS", "INTELIGENCIA ARTIFICIAL"]):
+    if any(p in txt for p in [
+        "DATA", "DATOS", "ANALYTICS", "ANALITICA", "BIG DATA",
+        "CIENCIA DE DATOS", "INTELIGENCIA ARTIFICIAL", "BUSINESS INTELLIGENCE"
+    ]):
         return "ANALITICA_DATOS"
 
-    if any(p in txt for p in ["MBA", "ADMINISTR", "DIRECCION", "GERENCIA", "NEGOCIOS", "EMPRESA"]):
+    if any(p in txt for p in [
+        "MBA", "ADMINISTR", "DIRECCION", "GERENCIA",
+        "NEGOCIOS", "EMPRESA", "EMPRESARIAL"
+    ]):
         return "MBA_ADMINISTRACION"
 
     if "PROYECT" in txt:
         return "GESTION_PROYECTOS"
 
-    if any(p in txt for p in ["MARKETING", "COMERCIAL", "VENTAS", "MERCAD"]):
+    if any(p in txt for p in [
+        "MARKETING", "COMERCIAL", "VENTAS", "MERCAD",
+        "PUBLICIDAD", "COMUNICACION"
+    ]):
         return "MARKETING_COMERCIAL"
 
-    if any(p in txt for p in ["DERECHO", "LEGAL", "JURID", "COMPLIANCE", "CONSTITUCIONAL"]):
+    if any(p in txt for p in [
+        "DERECHO", "LEGAL", "JURID", "COMPLIANCE",
+        "CONSTITUCIONAL", "PENAL", "PROCESAL"
+    ]):
         return "DERECHO_LEGAL"
 
-    if any(p in txt for p in ["SALUD", "HOSPITAL", "CLINIC", "SANIT", "MEDIC", "EPIDEM"]):
+    if any(p in txt for p in [
+        "SALUD", "HOSPITAL", "CLINIC", "SANIT",
+        "MEDIC", "EPIDEM", "ENFERM", "ODONTO"
+    ]):
         return "SALUD_GESTION"
 
-    if any(p in txt for p in ["EDUC", "DOCENC", "PEDAGOG", "ENSEN", "ENSEÑ"]):
+    if any(p in txt for p in [
+        "EDUC", "DOCENC", "PEDAGOG", "ENSEN", "ENSEÑ"
+    ]):
         return "EDUCACION"
 
-    if any(p in txt for p in ["SOFTWARE", "SISTEMAS", "INFORMAT", "CIBER", "TECNOLOG", "TRANSFORMACION DIGITAL"]):
+    if any(p in txt for p in [
+        "SOFTWARE", "SISTEMAS", "INFORMAT", "CIBER",
+        "TECNOLOG", "TRANSFORMACION DIGITAL"
+    ]):
         return "TECNOLOGIA"
 
-    if any(p in txt for p in ["PSICO", "TALENTO", "RECURSOS HUMANOS", "HUMANO"]):
+    if any(p in txt for p in [
+        "PSICO", "TALENTO", "RECURSOS HUMANOS", "HUMANO"
+    ]):
         return "PSICOLOGIA_RRHH"
 
-    if any(p in txt for p in ["ARQUIT", "DISENO", "DISEÑO", "URBAN"]):
+    if any(p in txt for p in [
+        "ARQUIT", "DISENO", "DISEÑO", "URBAN"
+    ]):
         return "ARQUITECTURA_DISENO"
 
     return "OTRAS"
@@ -274,16 +314,25 @@ def preparar_catalogo_maestrias(catalogo, col_programa=None):
 
     maestrias = catalogo.loc[mask_maestria].copy()
 
+    if maestrias.empty:
+        raise ValueError(
+            "No se detectaron maestrías en el catálogo. "
+            "Revisa si el catálogo usa otra palabra distinta a MAESTRIA, MASTER, POSGRADO o POSTGRADO."
+        )
+
     if col_programa is None:
         col_programa = detectar_columna_programa(maestrias)
 
     maestrias["ProgramaMaestria"] = maestrias[col_programa].astype(str)
-    maestrias["LineaMaestria"] = maestrias["ProgramaMaestria"].apply(asignar_linea_programa)
+    maestrias["LineaMaestria"] = maestrias["ProgramaMaestria"].apply(
+        asignar_linea_programa
+    )
 
     catalogo_lineas = (
         maestrias[["LineaMaestria", "ProgramaMaestria"]]
         .drop_duplicates()
         .sort_values(["LineaMaestria", "ProgramaMaestria"])
+        .reset_index(drop=True)
     )
 
     return maestrias, catalogo_lineas

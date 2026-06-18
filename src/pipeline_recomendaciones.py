@@ -399,50 +399,35 @@ def obtener_laboral_sql(conn, identificadores):
 
 
 def obtener_laboral_linkedin_sql(conn, identificadores):
+    """
+    Lee toda la tabla de LinkedIn y filtra en Python.
+    Esto evita errores de cruce por tipos de dato, collation o temp tables.
+    """
+
     ids = (
         pd.Series(identificadores)
         .dropna()
         .astype(str)
+        .str.replace(r"\.0$", "", regex=True)
         .str.strip()
         .unique()
         .tolist()
     )
 
-    cursor = conn.cursor()
-
-    cursor.execute("""
-    IF OBJECT_ID('tempdb..#ids_graduados_linkedin') IS NOT NULL
-        DROP TABLE #ids_graduados_linkedin;
-
-    CREATE TABLE #ids_graduados_linkedin (
-        NUMAFI VARCHAR(30)
-    );
-    """)
-
-    cursor.fast_executemany = True
-
-    cursor.executemany(
-        "INSERT INTO #ids_graduados_linkedin (NUMAFI) VALUES (?)",
-        [(i,) for i in ids]
-    )
-
-    conn.commit()
+    ids_set = set(ids)
 
     query = """
     SELECT
-        CAST(l.cedula AS VARCHAR(30)) AS NUMAFI,
-        l.nombre AS APENOMAFI,
-        l.carrera AS CarreraLinkedIn,
-        l.empresa AS NOMEMP,
-        l.cargo AS OCUPAFI,
-        l.tamanoEmpresa AS TamanoEmpresaLinkedIn,
-        l.fechaIngreso AS FECINGAFI,
-        l.paisTrabajo AS PaisTrabajoLinkedIn,
-        l.anioGraduacion AS AnioGraduacionLinkedIn
-    FROM BDD_Proyectos.mercados.EmpleabilidadLinkedin l
-    INNER JOIN #ids_graduados_linkedin i
-        ON CAST(l.cedula AS VARCHAR(30)) COLLATE SQL_Latin1_General_CP1_CI_AI
-         = i.NUMAFI COLLATE SQL_Latin1_General_CP1_CI_AI;
+        CAST(cedula AS VARCHAR(30)) AS NUMAFI,
+        nombre AS APENOMAFI,
+        carrera AS CarreraLinkedIn,
+        empresa AS NOMEMP,
+        cargo AS OCUPAFI,
+        tamanoEmpresa AS TamanoEmpresaLinkedIn,
+        fechaIngreso AS FECINGAFI,
+        paisTrabajo AS PaisTrabajoLinkedIn,
+        anioGraduacion AS AnioGraduacionLinkedIn
+    FROM BDD_Proyectos.mercados.EmpleabilidadLinkedin;
     """
 
     linkedin = pd.read_sql(query, conn)
@@ -450,7 +435,17 @@ def obtener_laboral_linkedin_sql(conn, identificadores):
     if linkedin.empty:
         return linkedin
 
-    linkedin["NUMAFI"] = linkedin["NUMAFI"].astype(str).str.strip()
+    linkedin["NUMAFI"] = (
+        linkedin["NUMAFI"]
+        .astype(str)
+        .str.replace(r"\.0$", "", regex=True)
+        .str.strip()
+    )
+
+    linkedin = linkedin[linkedin["NUMAFI"].isin(ids_set)].copy()
+
+    if linkedin.empty:
+        return linkedin
 
     linkedin["FECINGAFI"] = pd.to_datetime(
         linkedin["FECINGAFI"],
@@ -569,7 +564,12 @@ def cruzar_graduados_laboral(graduados_pregrado, laboral, laboral_linkedin=None)
     )
 
     if not empleo_combinado.empty:
-        empleo_combinado["NUMAFI"] = empleo_combinado["NUMAFI"].astype(str).str.strip()
+        empleo_combinado["NUMAFI"] = (
+            empleo_combinado["NUMAFI"]
+            .astype(str)
+            .str.replace(r"\.0$", "", regex=True)
+            .str.strip()
+        )
 
         empleo_combinado["PrioridadFuenteLaboral"] = empleo_combinado["FuenteInformacionLaboral"].map({
             "SIM": 1,

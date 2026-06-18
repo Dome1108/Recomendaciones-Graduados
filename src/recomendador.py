@@ -10,11 +10,6 @@ from reglas_recomendacion import (
 
 
 def sumar_reglas(texto, reglas, scores):
-    """
-    Suma puntos a cada línea de maestría cuando encuentra coincidencias
-    en el texto analizado.
-    """
-
     texto = normalizar_texto(texto)
 
     for palabra, linea, puntos in reglas:
@@ -25,12 +20,6 @@ def sumar_reglas(texto, reglas, scores):
 
 
 def puntos_experiencia(anios_cargo, linea):
-    """
-    Asigna puntos por años en el cargo.
-    Para líneas gerenciales, más experiencia suma más.
-    Para líneas técnicas, entre 1 y 5 años tiene alta afinidad.
-    """
-
     if pd.isna(anios_cargo):
         return 0
 
@@ -60,11 +49,6 @@ def puntos_experiencia(anios_cargo, linea):
 
 
 def recomendar_lineas(row):
-    """
-    Genera ranking de líneas recomendadas para un graduado.
-    Usa carrera, título, facultad, empresa, tipo de empresa, cargo y años en cargo.
-    """
-
     scores = {}
 
     texto_pregrado = " ".join([
@@ -102,15 +86,39 @@ def recomendar_lineas(row):
 
 
 def generar_justificacion(row):
-    """
-    Genera una explicación textual para la recomendación principal.
-    """
-
     rec = row.get("Recomendacion_1", "")
     carrera = row.get("CarreraHom", "")
-    empresa = row.get("NOMEMP", "")
-    cargo = row.get("OCUPAFI", "")
     estado_laboral = row.get("TieneInformacionLaboral", "")
+    fuente_laboral = row.get("FuenteInformacionLaboral", "")
+    ya_posgrado = row.get("YaEstudioPosgradoUDLA", "")
+    restriccion = row.get("RestriccionAcademica", "")
+
+    if restriccion == "MEDICINA":
+        return (
+            f"Recomendación restringida por formación de pregrado en {carrera}. "
+            f"Se priorizan únicamente programas compatibles con Medicina o gestión en salud, "
+            f"evitando cruces hacia especialidades odontológicas."
+        )
+
+    if restriccion == "ODONTOLOGIA":
+        return (
+            f"Recomendación restringida por formación de pregrado en {carrera}. "
+            f"Se priorizan únicamente programas compatibles con Odontología o gestión en salud, "
+            f"evitando cruces hacia especialidades médicas."
+        )
+
+    if restriccion == "SALUD_GENERAL":
+        return (
+            f"Recomendación restringida por formación de pregrado en el área de salud. "
+            f"Se priorizan programas compatibles con gestión o desarrollo profesional en salud."
+        )
+
+    if ya_posgrado == "Sí":
+        return (
+            f"Este graduado ya registra posgrado previo en UDLA. "
+            f"La recomendación prioriza alternativas complementarias a su trayectoria previa. "
+            f"Línea principal sugerida: {rec}."
+        )
 
     if estado_laboral == "Sin información laboral":
         if rec == "FINANZAS_BANCA":
@@ -121,38 +129,45 @@ def generar_justificacion(row):
             return f"Recomendación transversal basada en su pregrado en {carrera}, orientada a gestión, administración y desarrollo profesional."
         if rec == "GESTION_PROYECTOS":
             return f"Recomendación transversal basada en su pregrado en {carrera}, orientada a planificación y gestión de proyectos."
-        if rec == "SALUD_GESTION":
-            return f"Recomendación basada en su formación de pregrado en {carrera}, con orientación hacia gestión en salud."
+        if rec in ["SALUD_MEDICINA", "SALUD_ODONTOLOGIA", "SALUD_GESTION"]:
+            return f"Recomendación basada principalmente en su formación de pregrado en {carrera}, con continuidad hacia programas del área de salud."
         if rec == "DERECHO_LEGAL":
             return f"Recomendación basada en su formación de pregrado en {carrera}, con continuidad hacia áreas legales o regulatorias."
 
         return f"Recomendación generada principalmente por su formación académica de pregrado en {carrera}."
 
+    if fuente_laboral == "LINKEDIN":
+        fuente_txt = "La información laboral proviene de LinkedIn como fuente secundaria."
+    elif fuente_laboral == "SIM":
+        fuente_txt = "La información laboral proviene de la fuente formal SIM."
+    else:
+        fuente_txt = ""
+
     if rec == "FINANZAS_BANCA":
-        return f"Alta afinidad por formación en {carrera}, experiencia laboral en {empresa} y relación con análisis, banca o gestión financiera."
+        return f"Alta afinidad por formación en {carrera} y relación con análisis, banca o gestión financiera. {fuente_txt}"
 
     if rec == "ANALITICA_DATOS":
-        return f"Alta afinidad por perfil analítico, experiencia como {cargo} y potencial uso de información para toma de decisiones."
+        return f"Alta afinidad por perfil analítico y potencial uso de información para toma de decisiones. {fuente_txt}"
 
     if rec == "MBA_ADMINISTRACION":
-        return "Recomendación orientada a crecimiento profesional hacia coordinación, jefatura, dirección o gestión empresarial."
+        return f"Recomendación orientada a crecimiento profesional hacia coordinación, jefatura, dirección o gestión empresarial. {fuente_txt}"
 
     if rec == "GESTION_PROYECTOS":
-        return "Recomendación transversal para fortalecer capacidades de planificación, ejecución y control de proyectos."
+        return f"Recomendación transversal para fortalecer capacidades de planificación, ejecución y control de proyectos. {fuente_txt}"
 
     if rec == "DERECHO_LEGAL":
-        return "Alta afinidad por formación o experiencia relacionada con temas jurídicos, legales o regulatorios."
+        return f"Alta afinidad por formación o experiencia relacionada con temas jurídicos, legales o regulatorios. {fuente_txt}"
 
-    if rec == "SALUD_GESTION":
-        return "Alta afinidad por formación o experiencia en el sector salud, con potencial desarrollo hacia gestión sanitaria o administrativa."
+    if rec in ["SALUD_MEDICINA", "SALUD_ODONTOLOGIA", "SALUD_GESTION"]:
+        return f"Alta afinidad por formación o trayectoria relacionada con el área de salud. {fuente_txt}"
 
     if rec == "TECNOLOGIA":
-        return "Alta afinidad por experiencia o formación relacionada con software, sistemas o transformación digital."
+        return f"Alta afinidad por experiencia o formación relacionada con software, sistemas o transformación digital. {fuente_txt}"
 
     if rec == "MARKETING_COMERCIAL":
-        return "Recomendación asociada a funciones comerciales, ventas, mercado o desarrollo de negocios."
+        return f"Recomendación asociada a funciones comerciales, ventas, mercado o desarrollo de negocios. {fuente_txt}"
 
     if rec == "EDUCACION":
-        return "Recomendación asociada a trayectoria en instituciones educativas, docencia o gestión académica."
+        return f"Recomendación asociada a trayectoria en instituciones educativas, docencia o gestión académica. {fuente_txt}"
 
-    return "Recomendación generada por coincidencia entre formación académica, sector laboral, cargo y años de experiencia."
+    return "Recomendación generada por coincidencia entre formación académica, trayectoria laboral y años de experiencia."

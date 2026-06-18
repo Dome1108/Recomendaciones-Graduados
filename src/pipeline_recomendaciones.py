@@ -78,6 +78,7 @@ def estandarizar_columnas_graduados(graduados):
         "Titulo",
         "desfacultad",
         "regimen",
+        "NivelEstudio",
         "FechaGraduacion",
         "Modalidad",
         "Genero",
@@ -92,27 +93,12 @@ def estandarizar_columnas_graduados(graduados):
 
 
 def cargar_graduados_sql(conn):
-    """
-    Carga toda la base de graduados desde DwhOperacional.dbo.Vw_Graduados.
-    """
-
     query = """
     SELECT *
     FROM DwhOperacional.dbo.Vw_Graduados;
     """
 
     graduados = pd.read_sql(query, conn)
-    graduados = estandarizar_columnas_graduados(graduados)
-
-    return graduados
-
-
-def cargar_graduados_excel(ruta_excel):
-    """
-    Solo para pruebas locales si se quisiera volver a usar Excel.
-    """
-
-    graduados = pd.read_excel(ruta_excel)
     graduados = estandarizar_columnas_graduados(graduados)
 
     return graduados
@@ -149,19 +135,41 @@ def asignar_linea_programa(nombre_programa):
     txt = normalizar_texto(nombre_programa)
 
     if any(p in txt for p in [
+        "ODONTO", "ODONTOPEDIATR", "ORTODON", "ENDODON",
+        "PERIODON", "IMPLANTOLOG", "REHABILITACION ORAL",
+        "REHABILITACIÓN ORAL"
+    ]):
+        return "SALUD_ODONTOLOGIA"
+
+    if any(p in txt for p in [
+        "MEDIC", "CARDIO", "PEDIATR", "GINECO", "TRAUMA",
+        "CIRUG", "ANEST", "RADIOLOG", "DERMA", "EMERGEN",
+        "MEDICINA INTERNA", "PSIQUIATR", "NEURO", "UROLOG",
+        "OFTALMO", "OTORRINO"
+    ]):
+        return "SALUD_MEDICINA"
+
+    if any(p in txt for p in [
+        "SALUD", "HOSPITAL", "CLINIC", "CLÍNIC", "SANIT",
+        "EPIDEM", "ENFERM", "FISIOTER", "TERAPIA"
+    ]):
+        return "SALUD_GESTION"
+
+    if any(p in txt for p in [
         "FINANZ", "BANCA", "FINANCI", "RIESGO", "TRIBUT",
         "MERCADO DE VALORES", "CONTABIL", "AUDITOR"
     ]):
         return "FINANZAS_BANCA"
 
     if any(p in txt for p in [
-        "DATA", "DATOS", "ANALYTICS", "ANALITICA", "BIG DATA",
-        "CIENCIA DE DATOS", "INTELIGENCIA ARTIFICIAL", "BUSINESS INTELLIGENCE"
+        "DATA", "DATOS", "ANALYTICS", "ANALITICA", "ANALÍTICA",
+        "BIG DATA", "CIENCIA DE DATOS", "INTELIGENCIA ARTIFICIAL",
+        "BUSINESS INTELLIGENCE"
     ]):
         return "ANALITICA_DATOS"
 
     if any(p in txt for p in [
-        "MBA", "ADMINISTR", "DIRECCION", "GERENCIA",
+        "MBA", "ADMINISTR", "DIRECCION", "DIRECCIÓN", "GERENCIA",
         "NEGOCIOS", "EMPRESA", "EMPRESARIAL"
     ]):
         return "MBA_ADMINISTRACION"
@@ -171,30 +179,24 @@ def asignar_linea_programa(nombre_programa):
 
     if any(p in txt for p in [
         "MARKETING", "COMERCIAL", "VENTAS", "MERCAD",
-        "PUBLICIDAD", "COMUNICACION"
+        "PUBLICIDAD", "COMUNICACION", "COMUNICACIÓN"
     ]):
         return "MARKETING_COMERCIAL"
 
     if any(p in txt for p in [
-        "DERECHO", "LEGAL", "JURID", "COMPLIANCE",
+        "DERECHO", "LEGAL", "JURID", "JURÍD", "COMPLIANCE",
         "CONSTITUCIONAL", "PENAL", "PROCESAL"
     ]):
         return "DERECHO_LEGAL"
 
     if any(p in txt for p in [
-        "SALUD", "HOSPITAL", "CLINIC", "SANIT",
-        "MEDIC", "EPIDEM", "ENFERM", "ODONTO"
-    ]):
-        return "SALUD_GESTION"
-
-    if any(p in txt for p in [
-        "EDUC", "DOCENC", "PEDAGOG", "ENSEN", "ENSEÑ"
+        "EDUC", "DOCENC", "PEDAGOG", "PEDAGÓG", "ENSEN", "ENSEÑ"
     ]):
         return "EDUCACION"
 
     if any(p in txt for p in [
         "SOFTWARE", "SISTEMAS", "INFORMAT", "CIBER",
-        "TECNOLOG", "TRANSFORMACION DIGITAL"
+        "TECNOLOG", "TRANSFORMACION DIGITAL", "TRANSFORMACIÓN DIGITAL"
     ]):
         return "TECNOLOGIA"
 
@@ -211,11 +213,39 @@ def asignar_linea_programa(nombre_programa):
     return "OTRAS"
 
 
-def preparar_graduados_pregrado_y_posgrado(graduados):
-    """
-    Separa registros de pregrado y detecta si la persona ya cursó posgrado UDLA.
-    """
+def calcular_restriccion_academica(row):
+    texto = " ".join([
+        normalizar_texto(row.get("CarreraHom", "")),
+        normalizar_texto(row.get("Titulo", "")),
+        normalizar_texto(row.get("desfacultad", ""))
+    ])
 
+    if any(p in texto for p in ["ODONTO", "ODONTOLOG"]):
+        return "ODONTOLOGIA"
+
+    if any(p in texto for p in ["MEDICINA", "MEDICO", "MÉDICO", "MEDICA", "MÉDICA"]):
+        return "MEDICINA"
+
+    if any(p in texto for p in ["ENFERM", "FISIOTER", "SALUD"]):
+        return "SALUD_GENERAL"
+
+    return "SIN_RESTRICCION"
+
+
+def lineas_permitidas_por_restriccion(restriccion):
+    if restriccion == "MEDICINA":
+        return ["SALUD_MEDICINA", "SALUD_GESTION"]
+
+    if restriccion == "ODONTOLOGIA":
+        return ["SALUD_ODONTOLOGIA", "SALUD_GESTION"]
+
+    if restriccion == "SALUD_GENERAL":
+        return ["SALUD_GESTION"]
+
+    return None
+
+
+def preparar_graduados_pregrado_y_posgrado(graduados):
     graduados = graduados.copy()
 
     graduados["TipoNivelAcademico"] = graduados.apply(detectar_tipo_nivel, axis=1)
@@ -228,6 +258,8 @@ def preparar_graduados_pregrado_y_posgrado(graduados):
 
     pregrado = graduados[graduados["TipoNivelAcademico"] == "PREGRADO"].copy()
     posgrado = graduados[graduados["TipoNivelAcademico"] == "POSGRADO"].copy()
+
+    pregrado["RestriccionAcademica"] = pregrado.apply(calcular_restriccion_academica, axis=1)
 
     pregrado["LlavePregrado"] = (
         pregrado["Identificador"].astype(str)
@@ -460,7 +492,7 @@ def preparar_catalogo_maestrias(catalogo, col_programa=None):
 
     mask_maestria = catalogo_txt[columnas_texto].apply(
         lambda fila: fila.astype(str).str.contains(
-            "MAESTR|MASTER|POSGRADO|POSTGRADO",
+            "MAESTR|MASTER|POSGRADO|POSTGRADO|ESPECIALIZ",
             regex=True
         ).any(),
         axis=1
@@ -470,8 +502,7 @@ def preparar_catalogo_maestrias(catalogo, col_programa=None):
 
     if maestrias.empty:
         raise ValueError(
-            "No se detectaron maestrías en el catálogo. "
-            "Revisa si el catálogo usa otra palabra distinta a MAESTRIA, MASTER, POSGRADO o POSTGRADO."
+            "No se detectaron maestrías/especializaciones en el catálogo."
         )
 
     if col_programa is None:
@@ -557,14 +588,34 @@ def ajustar_ranking_por_posgrado_previo(ranking, lineas_previas):
     return ranking
 
 
-def completar_ranking_si_faltan(ranking, lineas_previas):
-    lineas_fallback = [
-        ("MBA_ADMINISTRACION", 35),
-        ("GESTION_PROYECTOS", 30),
-        ("ANALITICA_DATOS", 25),
-        ("MARKETING_COMERCIAL", 20),
-        ("TECNOLOGIA", 20)
-    ]
+def aplicar_restriccion_academica(ranking, restriccion):
+    lineas_permitidas = lineas_permitidas_por_restriccion(restriccion)
+
+    if lineas_permitidas is None:
+        return ranking
+
+    if ranking.empty:
+        return ranking
+
+    ranking = ranking[ranking["LineaMaestria"].isin(lineas_permitidas)].copy()
+    ranking = ranking.sort_values("Score", ascending=False).reset_index(drop=True)
+
+    return ranking
+
+
+def completar_ranking_si_faltan(ranking, lineas_previas, restriccion):
+    lineas_permitidas = lineas_permitidas_por_restriccion(restriccion)
+
+    if lineas_permitidas is not None:
+        fallback = [(linea, 60 - i * 10) for i, linea in enumerate(lineas_permitidas)]
+    else:
+        fallback = [
+            ("MBA_ADMINISTRACION", 35),
+            ("GESTION_PROYECTOS", 30),
+            ("ANALITICA_DATOS", 25),
+            ("MARKETING_COMERCIAL", 20),
+            ("TECNOLOGIA", 20)
+        ]
 
     ranking = ranking.copy()
 
@@ -580,7 +631,7 @@ def completar_ranking_si_faltan(ranking, lineas_previas):
 
     nuevos = []
 
-    for linea, score in lineas_fallback:
+    for linea, score in fallback:
         if linea not in existentes and linea not in lineas_previas_lista:
             nuevos.append({"LineaMaestria": linea, "Score": score})
 
@@ -590,14 +641,20 @@ def completar_ranking_si_faltan(ranking, lineas_previas):
     if nuevos:
         ranking = pd.concat([ranking, pd.DataFrame(nuevos)], ignore_index=True)
 
+    ranking = ranking.sort_values("Score", ascending=False).reset_index(drop=True)
+
     return ranking.head(3)
 
 
 def generar_recomendaciones(base, catalogo_lineas):
     recomendaciones = []
 
-    for _, row in base.iterrows():
+    for idx, row in base.iterrows():
         ranking = recomendar_lineas(row)
+
+        restriccion = row.get("RestriccionAcademica", "SIN_RESTRICCION")
+
+        ranking = aplicar_restriccion_academica(ranking, restriccion)
 
         ranking = ajustar_ranking_por_posgrado_previo(
             ranking,
@@ -609,7 +666,8 @@ def generar_recomendaciones(base, catalogo_lineas):
 
         ranking = completar_ranking_si_faltan(
             ranking,
-            row.get("LineasPosgradoPrevias", "No registra")
+            row.get("LineasPosgradoPrevias", "No registra"),
+            restriccion
         )
 
         ranking = ranking.head(3).copy()
@@ -624,6 +682,7 @@ def generar_recomendaciones(base, catalogo_lineas):
                 if x.strip() != ""
             ]
 
+        ranking["RegistroID"] = idx
         ranking["Identificador"] = row.get("Identificador", "")
         ranking["Estudiante"] = row.get("Estudiante", "")
         ranking["MailUDLA"] = row.get("MailUDLA", "")
@@ -645,6 +704,7 @@ def generar_recomendaciones(base, catalogo_lineas):
         ranking["YaEstudioPosgradoUDLA"] = row.get("YaEstudioPosgradoUDLA", "No")
         ranking["PosgradosUDLAPrevios"] = row.get("PosgradosUDLAPrevios", "No registra")
         ranking["LineasPosgradoPrevias"] = row.get("LineasPosgradoPrevias", "No registra")
+        ranking["RestriccionAcademica"] = restriccion
 
         ranking["ProgramasSugeridosUDLA"] = ranking["LineaMaestria"].apply(
             lambda linea: obtener_programas_por_linea(
@@ -658,9 +718,13 @@ def generar_recomendaciones(base, catalogo_lineas):
 
         recomendaciones.append(ranking)
 
+    if len(recomendaciones) == 0:
+        return pd.DataFrame(), pd.DataFrame()
+
     recomendaciones_larga = pd.concat(recomendaciones, ignore_index=True)
 
-    campos_index = [
+    campos_info = [
+        "RegistroID",
         "Identificador",
         "Estudiante",
         "MailUDLA",
@@ -681,29 +745,27 @@ def generar_recomendaciones(base, catalogo_lineas):
         "AniosDesdeGraduacion",
         "YaEstudioPosgradoUDLA",
         "PosgradosUDLAPrevios",
-        "LineasPosgradoPrevias"
+        "LineasPosgradoPrevias",
+        "RestriccionAcademica"
     ]
 
-    for col in campos_index:
-        if col not in recomendaciones_larga.columns:
-            recomendaciones_larga[col] = ""
+    metadata = (
+        recomendaciones_larga[campos_info]
+        .drop_duplicates(subset=["RegistroID"])
+        .reset_index(drop=True)
+    )
 
-    recomendaciones_larga["NOMEMP"] = recomendaciones_larga["NOMEMP"].fillna("Sin información laboral")
-    recomendaciones_larga["TIPOEMPRES"] = recomendaciones_larga["TIPOEMPRES"].fillna("Sin información laboral")
-    recomendaciones_larga["OCUPAFI"] = recomendaciones_larga["OCUPAFI"].fillna("Sin información laboral")
-    recomendaciones_larga["TieneInformacionLaboral"] = recomendaciones_larga["TieneInformacionLaboral"].fillna("Sin información laboral")
-    recomendaciones_larga["AniosEnCargo"] = recomendaciones_larga["AniosEnCargo"].fillna(0)
-    recomendaciones_larga["AniosDesdeGraduacion"] = recomendaciones_larga["AniosDesdeGraduacion"].fillna(0)
-
-    top3 = recomendaciones_larga.pivot_table(
-        index=campos_index,
+    top3_wide = recomendaciones_larga.pivot_table(
+        index="RegistroID",
         columns="OrdenRecomendacion",
         values=["LineaMaestria", "Score", "ProgramasSugeridosUDLA"],
         aggfunc="first"
     )
 
-    top3.columns = [f"{var}_{orden}" for var, orden in top3.columns]
-    top3 = top3.reset_index()
+    top3_wide.columns = [f"{var}_{orden}" for var, orden in top3_wide.columns]
+    top3_wide = top3_wide.reset_index()
+
+    top3 = metadata.merge(top3_wide, on="RegistroID", how="left")
 
     top3 = top3.rename(columns={
         "LineaMaestria_1": "Recomendacion_1",
@@ -747,6 +809,7 @@ def preparar_resultado_sql(top3):
         "YaEstudioPosgradoUDLA",
         "PosgradosUDLAPrevios",
         "LineasPosgradoPrevias",
+        "RestriccionAcademica",
         "Recomendacion_1",
         "Score_1",
         "Programas_UDLA_1",
@@ -812,6 +875,7 @@ def cargar_resultado_bdd_idm(conn, top3):
         YaEstudioPosgradoUDLA NVARCHAR(10) NULL,
         PosgradosUDLAPrevios NVARCHAR(MAX) NULL,
         LineasPosgradoPrevias NVARCHAR(MAX) NULL,
+        RestriccionAcademica NVARCHAR(100) NULL,
         Recomendacion_1 NVARCHAR(100) NULL,
         Score_1 FLOAT NULL,
         Programas_UDLA_1 NVARCHAR(MAX) NULL,

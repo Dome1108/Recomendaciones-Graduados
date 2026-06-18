@@ -115,6 +115,9 @@ if "TieneInformacionLaboral" not in top3.columns:
 if "YaEstudioPosgradoUDLA" not in top3.columns:
     top3["YaEstudioPosgradoUDLA"] = "No"
 
+if "RestriccionAcademica" not in top3.columns:
+    top3["RestriccionAcademica"] = "SIN_RESTRICCION"
+
 top3["EtiquetaBusqueda"] = (
     top3["Identificador"].astype(str)
     + " | "
@@ -126,21 +129,41 @@ top3["EtiquetaBusqueda"] = (
 
 st.sidebar.header("Filtros generales")
 
+opciones_laboral_base = ["Con información laboral", "Sin información laboral"]
+opciones_laboral_extra = [
+    x for x in sorted(top3["TieneInformacionLaboral"].dropna().unique())
+    if x not in opciones_laboral_base
+]
+opciones_laboral = opciones_laboral_base + opciones_laboral_extra
+
 estado_laboral = st.sidebar.multiselect(
     "Información laboral",
-    options=sorted(top3["TieneInformacionLaboral"].dropna().unique()),
-    default=sorted(top3["TieneInformacionLaboral"].dropna().unique())
+    options=opciones_laboral,
+    default=opciones_laboral
 )
+
+opciones_posgrado_base = ["No", "Sí"]
+opciones_posgrado_extra = [
+    x for x in sorted(top3["YaEstudioPosgradoUDLA"].dropna().unique())
+    if x not in opciones_posgrado_base
+]
+opciones_posgrado = opciones_posgrado_base + opciones_posgrado_extra
 
 filtro_posgrado = st.sidebar.multiselect(
     "Ya estudió posgrado UDLA",
-    options=sorted(top3["YaEstudioPosgradoUDLA"].dropna().unique()),
-    default=sorted(top3["YaEstudioPosgradoUDLA"].dropna().unique())
+    options=opciones_posgrado,
+    default=opciones_posgrado
 )
 
 carreras = st.sidebar.multiselect(
     "Carrera de pregrado",
     options=sorted(top3["CarreraHom"].dropna().unique()),
+    default=[]
+)
+
+restricciones = st.sidebar.multiselect(
+    "Restricción académica",
+    options=sorted(top3["RestriccionAcademica"].dropna().unique()),
     default=[]
 )
 
@@ -154,6 +177,9 @@ if filtro_posgrado:
 
 if carreras:
     df_filtrado = df_filtrado[df_filtrado["CarreraHom"].isin(carreras)]
+
+if restricciones:
+    df_filtrado = df_filtrado[df_filtrado["RestriccionAcademica"].isin(restricciones)]
 
 
 col1, col2, col3, col4, col5 = st.columns(5)
@@ -217,14 +243,12 @@ with tab_consultor:
     a7.markdown(f"**Años desde graduación:**  \n{row.get('AniosDesdeGraduacion', '')}")
     a8.markdown(f"**Correo UDLA:**  \n{row.get('MailUDLA', '')}")
 
-    st.markdown("### Perfil laboral")
+    st.markdown("### Estado laboral")
 
-    l1, l2, l3, l4 = st.columns(4)
-
-    l1.markdown(f"**Estado laboral:**  \n{row.get('TieneInformacionLaboral', '')}")
-    l2.markdown(f"**Empresa:**  \n{row.get('NOMEMP', '')}")
-    l3.markdown(f"**Cargo/Ocupación:**  \n{row.get('OCUPAFI', '')}")
-    l4.markdown(f"**Años en cargo:**  \n{row.get('AniosEnCargo', '')}")
+    if row.get("TieneInformacionLaboral", "") == "Con información laboral":
+        st.success("Registra información laboral.")
+    else:
+        st.warning("No registra información laboral en la fuente consultada.")
 
     st.markdown("### Historial de posgrado UDLA")
 
@@ -235,6 +259,19 @@ with tab_consultor:
         )
     else:
         st.success("No registra posgrado UDLA previo en la base.")
+
+    st.markdown("### Restricción académica")
+
+    restriccion = row.get("RestriccionAcademica", "SIN_RESTRICCION")
+
+    if restriccion == "MEDICINA":
+        st.info("Por su formación en Medicina, solo se recomiendan programas compatibles con Medicina o gestión en salud. No se muestran especialidades odontológicas.")
+    elif restriccion == "ODONTOLOGIA":
+        st.info("Por su formación en Odontología, solo se recomiendan programas compatibles con Odontología o gestión en salud. No se muestran especialidades médicas.")
+    elif restriccion == "SALUD_GENERAL":
+        st.info("Por su formación en el área de salud, se priorizan programas compatibles con gestión o desarrollo profesional en salud.")
+    else:
+        st.info("No aplica restricción académica específica.")
 
     st.markdown("### Top 3 recomendaciones")
 
@@ -388,12 +425,10 @@ with tab_base:
         "desfacultad",
         "Titulo",
         "TieneInformacionLaboral",
-        "NOMEMP",
-        "OCUPAFI",
-        "AniosEnCargo",
         "AniosDesdeGraduacion",
         "YaEstudioPosgradoUDLA",
         "PosgradosUDLAPrevios",
+        "RestriccionAcademica",
         "Recomendacion_1",
         "Score_1",
         "Programas_UDLA_1",

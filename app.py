@@ -112,6 +112,9 @@ for col in ["Score_1", "Score_2", "Score_3", "AniosEnCargo", "AniosDesdeGraduaci
 if "TieneInformacionLaboral" not in top3.columns:
     top3["TieneInformacionLaboral"] = "Sin información laboral"
 
+if "FuenteInformacionLaboral" not in top3.columns:
+    top3["FuenteInformacionLaboral"] = "SIN_INFORMACION_LABORAL"
+
 if "YaEstudioPosgradoUDLA" not in top3.columns:
     top3["YaEstudioPosgradoUDLA"] = "No"
 
@@ -182,13 +185,14 @@ if restricciones:
     df_filtrado = df_filtrado[df_filtrado["RestriccionAcademica"].isin(restricciones)]
 
 
-col1, col2, col3, col4, col5 = st.columns(5)
+col1, col2, col3, col4, col5, col6 = st.columns(6)
 
 col1.metric("Graduados con recomendación", len(top3))
-col2.metric("Con empleo", int((top3["TieneInformacionLaboral"] == "Con información laboral").sum()))
-col3.metric("Sin empleo", int((top3["TieneInformacionLaboral"] == "Sin información laboral").sum()))
-col4.metric("Con posgrado UDLA previo", int((top3["YaEstudioPosgradoUDLA"] == "Sí").sum()))
-col5.metric("Casos filtrados", len(df_filtrado))
+col2.metric("Empleo SIM", int((top3["FuenteInformacionLaboral"] == "SIM").sum()))
+col3.metric("Empleo LinkedIn", int((top3["FuenteInformacionLaboral"] == "LINKEDIN").sum()))
+col4.metric("Sin empleo mapeado", int((top3["TieneInformacionLaboral"] == "Sin información laboral").sum()))
+col5.metric("Con posgrado UDLA previo", int((top3["YaEstudioPosgradoUDLA"] == "Sí").sum()))
+col6.metric("Casos filtrados", len(df_filtrado))
 
 st.divider()
 
@@ -248,7 +252,7 @@ with tab_consultor:
     if row.get("TieneInformacionLaboral", "") == "Con información laboral":
         st.success("Registra información laboral.")
     else:
-        st.warning("No registra información laboral en la fuente consultada.")
+        st.warning("No registra información laboral en las fuentes consultadas.")
 
     st.markdown("### Historial de posgrado UDLA")
 
@@ -337,21 +341,21 @@ with tab_resumen:
 
     c1, c2 = st.columns(2)
 
-    resumen_estado = (
-        top3["TieneInformacionLaboral"]
+    resumen_fuente = (
+        top3["FuenteInformacionLaboral"]
         .value_counts()
         .reset_index()
     )
-    resumen_estado.columns = ["Estado laboral", "Cantidad"]
+    resumen_fuente.columns = ["Fuente laboral", "Cantidad"]
 
-    fig_estado = px.pie(
-        resumen_estado,
-        names="Estado laboral",
+    fig_fuente = px.pie(
+        resumen_fuente,
+        names="Fuente laboral",
         values="Cantidad",
-        title="Distribución por información laboral"
+        title="Distribución por fuente laboral"
     )
 
-    c1.plotly_chart(fig_estado, use_container_width=True)
+    c1.plotly_chart(fig_fuente, use_container_width=True)
 
     resumen_posgrado = (
         top3["YaEstudioPosgradoUDLA"]
@@ -425,6 +429,7 @@ with tab_base:
         "desfacultad",
         "Titulo",
         "TieneInformacionLaboral",
+        "FuenteInformacionLaboral",
         "AniosDesdeGraduacion",
         "YaEstudioPosgradoUDLA",
         "PosgradosUDLAPrevios",

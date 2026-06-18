@@ -26,6 +26,7 @@ from pipeline_recomendaciones import (
     cargar_graduados_sql,
     preparar_graduados_pregrado_y_posgrado,
     obtener_laboral_sql,
+    obtener_laboral_linkedin_sql,
     cruzar_graduados_laboral,
     obtener_catalogo_udla,
     preparar_catalogo_maestrias,
@@ -43,11 +44,6 @@ print("Tabla destino:", TABLA_RESULTADO_BDD)
 
 # %%
 def limpiar_caracteres_excel(valor):
-    """
-    Elimina caracteres ilegales para archivos Excel/openpyxl.
-    No altera números ni fechas.
-    """
-
     if isinstance(valor, str):
         return re.sub(r"[\x00-\x08\x0B-\x0C\x0E-\x1F]", "", valor)
 
@@ -55,10 +51,6 @@ def limpiar_caracteres_excel(valor):
 
 
 def limpiar_dataframe_excel(df):
-    """
-    Limpia columnas tipo texto para poder exportar a Excel sin errores.
-    """
-
     df_limpio = df.copy()
 
     for col in df_limpio.columns:
@@ -69,10 +61,6 @@ def limpiar_dataframe_excel(df):
 
 
 def exportar_hoja_segura(writer, df, sheet_name):
-    """
-    Exporta una hoja limpiando caracteres ilegales para Excel.
-    """
-
     df_limpio = limpiar_dataframe_excel(df)
     df_limpio.to_excel(writer, sheet_name=sheet_name, index=False)
 
@@ -106,6 +94,7 @@ columnas_preview_graduados = [
     "CarreraHom",
     "Titulo",
     "FechaGraduacion",
+    "RestriccionAcademica",
     "YaEstudioPosgradoUDLA",
     "PosgradosUDLAPrevios"
 ]
@@ -123,17 +112,28 @@ laboral = obtener_laboral_sql(
     identificadores=graduados_pregrado["Identificador"]
 )
 
-print("Filas laborales encontradas:", len(laboral))
+print("Filas laborales SIM encontradas:", len(laboral))
 display(laboral.head())
+
+# %%
+laboral_linkedin = obtener_laboral_linkedin_sql(
+    conn=conn,
+    identificadores=graduados_pregrado["Identificador"]
+)
+
+print("Filas laborales LinkedIn encontradas:", len(laboral_linkedin))
+display(laboral_linkedin.head())
 
 # %%
 base = cruzar_graduados_laboral(
     graduados_pregrado=graduados_pregrado,
-    laboral=laboral
+    laboral=laboral,
+    laboral_linkedin=laboral_linkedin
 )
 
 print("Filas base final:", len(base))
 print(base["TieneInformacionLaboral"].value_counts(dropna=False))
+print(base["FuenteInformacionLaboral"].value_counts(dropna=False))
 
 columnas_preview = [
     "Identificador",
@@ -142,11 +142,13 @@ columnas_preview = [
     "Titulo",
     "FechaGraduacion",
     "TieneInformacionLaboral",
+    "FuenteInformacionLaboral",
     "NOMEMP",
     "TIPOEMPRES",
     "OCUPAFI",
     "AniosDesdeGraduacion",
     "AniosEnCargo",
+    "RestriccionAcademica",
     "YaEstudioPosgradoUDLA",
     "PosgradosUDLAPrevios"
 ]
@@ -196,10 +198,10 @@ columnas_validacion = [
     "CarreraHom",
     "Titulo",
     "TieneInformacionLaboral",
-    "NOMEMP",
-    "OCUPAFI",
+    "FuenteInformacionLaboral",
     "YaEstudioPosgradoUDLA",
     "PosgradosUDLAPrevios",
+    "RestriccionAcademica",
     "Recomendacion_1",
     "Score_1",
     "Programas_UDLA_1",
@@ -217,8 +219,6 @@ columnas_validacion = [c for c in columnas_validacion if c in top3.columns]
 display(top3[columnas_validacion].head(30))
 
 # %%
-# 1. Cargar primero a SQL para que la tabla exista aunque falle el Excel
-
 filas_cargadas = cargar_resultado_bdd_idm(
     conn=conn,
     top3=top3
@@ -228,14 +228,14 @@ print(f"Tabla cargada en {TABLA_RESULTADO_BDD}")
 print(f"Filas cargadas: {filas_cargadas}")
 
 # %%
-# 2. Exportar Excel local limpiando caracteres ilegales
-
 RUTA_SALIDA.parent.mkdir(parents=True, exist_ok=True)
 
 with pd.ExcelWriter(RUTA_SALIDA, engine="openpyxl") as writer:
     exportar_hoja_segura(writer, graduados_total, "Vw_Graduados")
     exportar_hoja_segura(writer, graduados_pregrado, "Graduados_pregrado")
     exportar_hoja_segura(writer, graduados_posgrado, "Graduados_posgrado")
+    exportar_hoja_segura(writer, laboral, "Laboral_SIM")
+    exportar_hoja_segura(writer, laboral_linkedin, "Laboral_LinkedIn")
     exportar_hoja_segura(writer, base, "Base_graduados_laboral")
     exportar_hoja_segura(writer, maestrias, "Catalogo_maestrias")
     exportar_hoja_segura(writer, catalogo_lineas, "Lineas_catalogo")

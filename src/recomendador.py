@@ -34,6 +34,11 @@ def puntos_experiencia(anios_cargo, linea):
     if pd.isna(anios_cargo):
         return 0
 
+    try:
+        anios_cargo = float(anios_cargo)
+    except Exception:
+        return 0
+
     if linea in ["MBA_ADMINISTRACION", "GESTION_PROYECTOS"]:
         if anios_cargo >= 5:
             return 10
@@ -105,6 +110,23 @@ def generar_justificacion(row):
     carrera = row.get("CarreraHom", "")
     empresa = row.get("NOMEMP", "")
     cargo = row.get("OCUPAFI", "")
+    estado_laboral = row.get("TieneInformacionLaboral", "")
+
+    if estado_laboral == "Sin información laboral":
+        if rec == "FINANZAS_BANCA":
+            return f"Recomendación basada principalmente en su formación de pregrado en {carrera}, con afinidad hacia finanzas, banca o gestión financiera."
+        if rec == "ANALITICA_DATOS":
+            return f"Recomendación basada principalmente en su formación de pregrado en {carrera}, con potencial de fortalecimiento en análisis de información y toma de decisiones."
+        if rec == "MBA_ADMINISTRACION":
+            return f"Recomendación transversal basada en su pregrado en {carrera}, orientada a gestión, administración y desarrollo profesional."
+        if rec == "GESTION_PROYECTOS":
+            return f"Recomendación transversal basada en su pregrado en {carrera}, orientada a planificación y gestión de proyectos."
+        if rec == "SALUD_GESTION":
+            return f"Recomendación basada en su formación de pregrado en {carrera}, con orientación hacia gestión en salud."
+        if rec == "DERECHO_LEGAL":
+            return f"Recomendación basada en su formación de pregrado en {carrera}, con continuidad hacia áreas legales o regulatorias."
+
+        return f"Recomendación generada principalmente por su formación académica de pregrado en {carrera}."
 
     if rec == "FINANZAS_BANCA":
         return f"Alta afinidad por formación en {carrera}, experiencia laboral en {empresa} y relación con análisis, banca o gestión financiera."
